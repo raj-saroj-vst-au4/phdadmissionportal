@@ -1,0 +1,29 @@
+# Local config with real credentials — copy from src/config-example.php
+/src/config.php
+
+# Composer
+/vendor/
+
+# Uploaded artefacts (candidate PDFs, photos, Excel sheets, CBT files)
+/public/uploads/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / runtime
+*.log
+
+# Reference master spreadsheet (likely real candidate data — keep out of git)
+/Master File*.xlsx

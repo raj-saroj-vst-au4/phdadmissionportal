@@ -1,0 +1,17 @@
+/* Minor overrides — Tailwind provides most utilities. */
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+table.data-table th { background: #eef2ff; color: #3730a3; font-weight: 600; text-align: left; padding: .5rem .6rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
+table.data-table td { padding: .55rem .6rem; border-top: 1px solid #e2e8f0; font-size: .875rem; vertical-align: top; }
+table.data-table tr:hover td { background: #f8fafc; }
+.btn { display: inline-flex; align-items: center; gap: .35rem; padding: .45rem .85rem; border-radius: .375rem; font-size: .875rem; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all .15s; }
+.btn-primary { background: #4f46e5; color: white; }
+.btn-primary:hover { background: #4338ca; }
+.btn-secondary { background: white; color: #334155; border-color: #cbd5e1; }
+.btn-secondary:hover { background: #f1f5f9; }
+.btn-danger { background: #e11d48; color: white; }
+.btn-danger:hover { background: #be123c; }
+.card { background: white; border: 1px solid #e2e8f0; border-radius: .5rem; padding: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+input[type=text], input[type=password], input[type=number], input[type=email], select, textarea {
+  border: 1px solid #cbd5e1; border-radius: .375rem; padding: .4rem .6rem; font-size: .875rem; width: 100%;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid #4f46e5; outline-offset: -1px; border-color: #4f46e5; }

@@ -1,0 +1,126 @@
+Dear Raj,
+
+1. For data (Excel file is attached for headings)
+
+ Need excel file upload link to extract data from excel file. Excel file contain following head of columns
+
+Make candidate profile using this column.
+
+On portal candidate profile contains following data
+
+ a. Dept Reg. No.
+
+ b. Name
+
+ c. Gender
+
+ d. Birth Category
+
+ e. EWS
+
+ f. Disabled?
+
+ g.  Categories Applied to
+
+ h. Research Interests (for selected department)
+
+ i. Remark
+
+ 
+
+2. For Shortlisting
+
+ Need a drop down for each candidate profile with three options
+
+  a. Yes
+
+  b. No
+
+  c. Doubtful
+
+ 
+
+3. For marks entering (Written test / CBT)
+
+ Two options, For CBT Moodle file upload link and for hard copy test, need page for entering marks
+
+This page need 
+
+ a. search box for Dept Reg. No. after extracting data
+
+ b. need box for entering written marks
+
+ c. Any Remark (which is entered in original file)
+
+ 
+
+4. For shortlisting
+
+Need a text box for enter marks for cut off (For GN only) with following information
+
+ a. Total catagory wise candidates (GN, OBC-NC, SC, ST, EWS, PWD)
+
+ b. total male and female students
+
+ c. total no of candidates as per Research Interests (for selected department) (which is in master file)
+
+ d. comparison pie diagram on page for different cutoff scores
+
+ 
+
+5. Panel making
+
+After shortlisting panleling of students will be created according to their catagory applied for.
+
+and pdf format to download the list of candidates for presently at the time of interview (only three columns Dept reg no, name, sign)
+
+ 
+
+6. For Interview marks entry
+
+Need to create 6 profile for this according to Research Area they applied, they will only see the candidates of that panel.
+
+ search box for entering Dept Reg. No. to fetch candidate profile (all data excluding Birth category details)
+
+ a. name
+
+ b. marks of UG, PG, Competitive exam,
+
+ c. Categories Applied to
+
+ d. Box for entering marks (4 categories, 25 marks each, Functional Knowledge, Research Aptitude, Quality of Research Proposals, Communication Skill and total marks box which calculate automatically).
+
+ e. check box for recommend or not recommended box at end of the page
+
+ 
+
+7. Final shortlisting of candidate after verification of marks
+
+Snehal Ma'am will give you formula for departmental mean, and for final shortlisting process need a drop down for selecting a candidate which include two types of drop down
+
+ a. Selected
+
+ b. Not Selected
+
+ 
+
+Under selected need different category
+
+ a, TA/RA 
+
+ b. SF
+
+ c. EX
+
+ d. CT
+
+ e. TAP
+
+ f. FA
+
+ g. SW
+
+ also after that need to assign birth category number
+
+and also need a drop down that is Waitlisted.
+

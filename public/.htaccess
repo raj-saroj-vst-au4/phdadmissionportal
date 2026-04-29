@@ -1,0 +1,5 @@
+DirectoryIndex index.php index.html
+Options -Indexes
+<FilesMatch "\.(md|sql|xlsx|py)$">
+  Require all denied
+</FilesMatch>
