@@ -59,6 +59,20 @@ function status_badge(string $s): string {
     return '<span class="inline-block px-2 py-0.5 rounded text-xs font-semibold '.$c.'">'.h($s).'</span>';
 }
 
+/**
+ * Normalize the "categories applied" string. RA and RA/TA (in any case / spacing) collapse to TA,
+ * and any standalone "RA" token inside a list is rewritten to "TA" (so "RA, SF" becomes "TA, SF").
+ * Mirrors normalize_categories_applied() in scripts/extract_excel.py — keep both in sync.
+ */
+function normalize_categories_applied(?string $raw): ?string {
+    if ($raw === null) return null;
+    $s = trim($raw);
+    if ($s === '') return '';
+    $compact = preg_replace('/\s+/', '', strtoupper($s));
+    if (in_array($compact, ['RA', 'RA/TA', 'TA/RA'], true)) return 'TA';
+    return preg_replace('/\bRA\b/i', 'TA', $s);
+}
+
 function normalize_birth_category(?string $raw): ?string {
     if (!$raw) return null;
     $r = strtoupper(trim($raw));

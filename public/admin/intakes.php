@@ -18,9 +18,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // HTML datetime-local comes as "YYYY-MM-DDTHH:MM"; normalise to MySQL DATETIME.
         $entrance_dt = $ed !== '' ? str_replace('T', ' ', $ed) . (strlen($ed) === 16 ? ':00' : '') : null;
         $interview_dt = $id !== '' ? str_replace('T', ' ', $id) . (strlen($id) === 16 ? ':00' : '') : null;
+        $intToNull = fn($v) => trim((string)$v) === '' ? null : max(0, (int)$v);
+        $taGn  = $intToNull($_POST['ta_seats_gn']  ?? '');
+        $taObc = $intToNull($_POST['ta_seats_obc'] ?? '');
+        $taSc  = $intToNull($_POST['ta_seats_sc']  ?? '');
+        $taSt  = $intToNull($_POST['ta_seats_st']  ?? '');
+        $taEws = $intToNull($_POST['ta_seats_ews'] ?? '');
         try {
-            q('INSERT INTO intakes(name,season,year,entrance_mode,entrance_datetime,interview_datetime) VALUES(?,?,?,?,?,?)',
-              [$name,$season,$year,$mode,$entrance_dt,$interview_dt]);
+            q('INSERT INTO intakes(name,season,year,entrance_mode,entrance_datetime,interview_datetime,
+                                   ta_seats_gn,ta_seats_obc,ta_seats_sc,ta_seats_st,ta_seats_ews)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+              [$name,$season,$year,$mode,$entrance_dt,$interview_dt,$taGn,$taObc,$taSc,$taSt,$taEws]);
             flash_set("Intake $name created", 'success');
         } catch (Throwable $e) {
             flash_set('Failed: ' . $e->getMessage(), 'error');
@@ -34,8 +42,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $iv = trim($_POST['interview_datetime'] ?? '');
         $entrance_dt = $ed !== '' ? str_replace('T', ' ', $ed) . (strlen($ed) === 16 ? ':00' : '') : null;
         $interview_dt = $iv !== '' ? str_replace('T', ' ', $iv) . (strlen($iv) === 16 ? ':00' : '') : null;
-        q('UPDATE intakes SET entrance_mode=?, entrance_datetime=?, interview_datetime=? WHERE id=?',
-          [$mode, $entrance_dt, $interview_dt, $id]);
+        $intToNull = fn($v) => trim((string)$v) === '' ? null : max(0, (int)$v);
+        $taGn  = $intToNull($_POST['ta_seats_gn']  ?? '');
+        $taObc = $intToNull($_POST['ta_seats_obc'] ?? '');
+        $taSc  = $intToNull($_POST['ta_seats_sc']  ?? '');
+        $taSt  = $intToNull($_POST['ta_seats_st']  ?? '');
+        $taEws = $intToNull($_POST['ta_seats_ews'] ?? '');
+        q('UPDATE intakes SET entrance_mode=?, entrance_datetime=?, interview_datetime=?,
+                              ta_seats_gn=?, ta_seats_obc=?, ta_seats_sc=?, ta_seats_st=?, ta_seats_ews=?
+           WHERE id=?',
+          [$mode, $entrance_dt, $interview_dt, $taGn, $taObc, $taSc, $taSt, $taEws, $id]);
         flash_set('Intake schedule updated.', 'success');
     } elseif ($act === 'activate') {
         $id = (int)$_POST['id'];
@@ -113,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('/phdportal/admin/intakes.php');
 }
 
-$intakes = all('SELECT i.*, (SELECT COUNT(*) FROM candidates c WHERE c.intake_id = i.id) candidate_count FROM intakes i ORDER BY year DESC, season');
+$intakes = all('SELECT i.*, (SELECT COUNT(*) FROM candidates c WHERE c.intake_id = i.id AND c.is_international = 0) candidate_count FROM intakes i ORDER BY year DESC, season');
 
 function fmt_dt_input(?string $dt): string {
     if (!$dt) return '';
@@ -159,9 +175,20 @@ render_header('Intakes', $u);
         <label class="text-sm font-medium">Interview date &amp; time</label>
         <input type="datetime-local" name="interview_datetime">
       </div>
+      <div>
+        <label class="text-sm font-medium block">Approved TA Seats (birth-category-wise) for this intake</label>
+        <p class="text-xs text-slate-500 mb-2">PWD candidates draw from their own birth-category bucket.</p>
+        <div class="grid grid-cols-5 gap-2">
+          <div><label class="text-xs text-slate-500">GN</label><input type="number" min="0" name="ta_seats_gn" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">OBC-NC</label><input type="number" min="0" name="ta_seats_obc" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">SC</label><input type="number" min="0" name="ta_seats_sc" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">ST</label><input type="number" min="0" name="ta_seats_st" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">EWS</label><input type="number" min="0" name="ta_seats_ews" placeholder="0"></div>
+        </div>
+      </div>
       <button class="btn btn-primary">Create</button>
     </form>
-    <p class="text-xs text-slate-500 mt-2">Admissions happen twice: Spring (Jan–Jun) and Autumn (Jul–Dec). Schedule fields can be edited later.</p>
+    <p class="text-xs text-slate-500 mt-2">Admissions happen twice: Spring (Jan–Jun) and Autumn (Jul–Dec). Schedule fields and TA seat counts can be edited later.</p>
   </div>
   <div class="md:col-span-2 card">
     <h3 class="font-semibold mb-3">Existing Intakes</h3>
@@ -186,7 +213,13 @@ render_header('Intakes', $u);
           </td>
           <td class="whitespace-nowrap">
             <button type="button" class="btn btn-secondary text-xs"
-              onclick='openSchedule(<?= (int)$i['id'] ?>, <?= json_encode($i['name']) ?>, <?= json_encode($i['entrance_mode']) ?>, <?= json_encode(fmt_dt_input($i['entrance_datetime'])) ?>, <?= json_encode(fmt_dt_input($i['interview_datetime'])) ?>)'>Edit Schedule</button>
+              onclick='openSchedule(<?= (int)$i['id'] ?>, <?= json_encode($i['name']) ?>, <?= json_encode($i['entrance_mode']) ?>, <?= json_encode(fmt_dt_input($i['entrance_datetime'])) ?>, <?= json_encode(fmt_dt_input($i['interview_datetime'])) ?>, <?= json_encode([
+                'gn'  => $i['ta_seats_gn'],
+                'obc' => $i['ta_seats_obc'],
+                'sc'  => $i['ta_seats_sc'],
+                'st'  => $i['ta_seats_st'],
+                'ews' => $i['ta_seats_ews'],
+              ]) ?>)'>Edit Schedule</button>
             <?php if (!$i['is_active']): ?>
             <button type="button" class="btn btn-secondary text-xs"
               onclick='openActivate(<?= (int)$i['id'] ?>, <?= json_encode($i['name']) ?>)'>Activate</button>
@@ -231,6 +264,17 @@ render_header('Intakes', $u);
       <div>
         <label class="text-sm font-medium">Interview date &amp; time</label>
         <input type="datetime-local" name="interview_datetime" id="sInterview">
+      </div>
+      <div>
+        <label class="text-sm font-medium block">Approved TA Seats (birth-category-wise)</label>
+        <p class="text-xs text-slate-500 mb-2">PWD candidates draw from their own birth-category bucket.</p>
+        <div class="grid grid-cols-5 gap-2">
+          <div><label class="text-xs text-slate-500">GN</label><input type="number" min="0" name="ta_seats_gn" id="sTaGn" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">OBC-NC</label><input type="number" min="0" name="ta_seats_obc" id="sTaObc" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">SC</label><input type="number" min="0" name="ta_seats_sc" id="sTaSc" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">ST</label><input type="number" min="0" name="ta_seats_st" id="sTaSt" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">EWS</label><input type="number" min="0" name="ta_seats_ews" id="sTaEws" placeholder="0"></div>
+        </div>
       </div>
       <div class="flex justify-end gap-2 pt-2">
         <button type="button" class="btn btn-secondary" onclick="closeSchedule()">Cancel</button>
@@ -285,12 +329,18 @@ render_header('Intakes', $u);
 </div>
 
 <script>
-function openSchedule(id, name, mode, entrance, interview) {
+function openSchedule(id, name, mode, entrance, interview, seats) {
   $('#sId').val(id);
   $('#sName').text(name);
   $('#sMode').val(mode || '');
   $('#sEntrance').val(entrance || '');
   $('#sInterview').val(interview || '');
+  seats = seats || {};
+  $('#sTaGn').val(seats.gn ?? '');
+  $('#sTaObc').val(seats.obc ?? '');
+  $('#sTaSc').val(seats.sc ?? '');
+  $('#sTaSt').val(seats.st ?? '');
+  $('#sTaEws').val(seats.ews ?? '');
   $('#schedBackdrop').removeClass('hidden');
 }
 function closeSchedule() { $('#schedBackdrop').addClass('hidden'); }

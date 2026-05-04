@@ -33,7 +33,7 @@ if ($action === 'init') {
     if ($size <= 0 || $size > 100 * 1024 * 1024) {
         json_out(['ok' => false, 'error' => 'File size out of range (max 100 MB)'], 400);
     }
-    $cand = one('SELECT id FROM candidates WHERE intake_id=? AND dept_reg_no=?', [$intake['id'], $dept]);
+    $cand = one('SELECT id FROM candidates WHERE intake_id=? AND dept_reg_no=? AND is_international=0', [$intake['id'], $dept]);
     if (!$cand) json_out(['ok' => false, 'error' => "No candidate for '$dept'"], 404);
 
     $uid = bin2hex(random_bytes(16));
@@ -78,7 +78,7 @@ if ($action === 'finalize') {
     $dept = (string)$meta['dept'];
     $expected_size = (int)$meta['size'];
 
-    $cand = one('SELECT id, dept_reg_no FROM candidates WHERE intake_id=? AND dept_reg_no=?', [$intake['id'], $dept]);
+    $cand = one('SELECT id, dept_reg_no FROM candidates WHERE intake_id=? AND dept_reg_no=? AND is_international=0', [$intake['id'], $dept]);
     if (!$cand) json_out(['ok' => false, 'error' => 'Candidate no longer exists'], 404);
 
     $final_name = preg_replace('/[^A-Za-z0-9_-]/', '_', $cand['dept_reg_no']) . '.pdf';

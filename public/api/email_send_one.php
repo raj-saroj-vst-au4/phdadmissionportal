@@ -20,7 +20,7 @@ if (!$candId || !$batchId || !$subject || !$body) {
     json_out(['ok'=>false,'error'=>'Missing parameters'], 400);
 }
 
-$c = one('SELECT id,name,email,dept_reg_no FROM candidates WHERE id=? AND intake_id=?', [$candId, $intake['id']]);
+$c = one('SELECT id,name,email,dept_reg_no FROM candidates WHERE id=? AND intake_id=? AND is_international=0', [$candId, $intake['id']]);
 if (!$c || !$c['email']) json_out(['ok'=>false,'error'=>'No email for candidate']);
 
 $placeholders = ['{{name}}','{{dept_reg_no}}','{{intake}}'];

@@ -15,7 +15,7 @@ $intake = active_intake();
 if (!$intake) json_out(['ok'=>false,'error'=>'No active intake'], 400);
 
 $phase = $_POST['phase'] ?? 'written';
-$is_intl = !empty($_POST['is_international']) ? 1 : 0;
+$is_intl = 0;
 
 if ($phase === 'written') {
     $rows = all("SELECT c.id, c.dept_reg_no, c.name, c.email, c.applicant_id, c.photo,

@@ -42,6 +42,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['autosave_marks'])) {
             $wRaw = trim((string)($row["s{$s}_wrong"] ?? ''));
             $cVal = $cRaw === '' ? null : (int)$cRaw;
             $wVal = $wRaw === '' ? null : (int)$wRaw;
+            $cCount = (int)($cVal ?? 0);
+            $wCount = (int)($wVal ?? 0);
+            if ($cCount + $wCount > 15) {
+                json_out([
+                    'ok' => false,
+                    'error' => "Section $s total (correct + wrong) cannot exceed 15.",
+                    'invalid' => ['cid' => $cid, 'section' => $s],
+                ], 422);
+            }
             $vals[] = $cVal;
             $vals[] = $wVal;
             if ($cVal !== null) { $totalCorrect += $cVal; $anyVal = true; }
@@ -55,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['autosave_marks'])) {
              s3_correct=?, s3_wrong=?,
              s4_correct=?, s4_wrong=?,
              written_marks=?
-           WHERE id=? AND intake_id=?', $params);
+           WHERE id=? AND intake_id=? AND is_international=0', $params);
         $saved[] = $cid;
     }
     json_out(['ok' => true, 'saved' => $saved, 'at' => date('H:i:s')]);
@@ -83,6 +92,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_save'])) {
         foreach (array_keys($data['c']) as $id) $idSet[(int)$id] = true;
         foreach (array_keys($data['w']) as $id) $idSet[(int)$id] = true;
     }
+
+    // Validate first — reject the whole save if any section breaches the 15-question cap.
+    $violations = [];
+    foreach (array_keys($idSet) as $cid) {
+        if (!$cid) continue;
+        for ($s = 1; $s <= 4; $s++) {
+            $cVal = trim((string)($sections[$s]['c'][$cid] ?? ''));
+            $wVal = trim((string)($sections[$s]['w'][$cid] ?? ''));
+            $cCount = $cVal === '' ? 0 : (int)$cVal;
+            $wCount = $wVal === '' ? 0 : (int)$wVal;
+            if ($cCount + $wCount > 15) {
+                $violations[] = ['cid' => $cid, 'section' => $s, 'sum' => $cCount + $wCount];
+            }
+        }
+    }
+    if ($violations) {
+        $first = $violations[0];
+        $cand = one('SELECT dept_reg_no FROM candidates WHERE id=? AND is_international=0', [$first['cid']]);
+        $reg = $cand['dept_reg_no'] ?? ('id ' . $first['cid']);
+        $msg = count($violations) === 1
+            ? "Section {$first['section']} for $reg has correct+wrong = {$first['sum']} (cap is 15). Nothing was saved."
+            : count($violations) . " section totals exceed 15 (e.g. $reg section {$first['section']} = {$first['sum']}). Nothing was saved.";
+        flash_set($msg, 'error');
+        $back = '/phdportal/admin/marks.php';
+        if ($q !== '') $back .= '?q=' . urlencode($q);
+        redirect($back);
+    }
+
     foreach (array_keys($idSet) as $cid) {
         if (!$cid) continue;
         $vals = [];
@@ -105,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_save'])) {
              s3_correct=?, s3_wrong=?,
              s4_correct=?, s4_wrong=?,
              written_marks=?
-           WHERE id=? AND intake_id=?', $params);
+           WHERE id=? AND intake_id=? AND is_international=0', $params);
         $saved++;
     }
     if ($intake) {
@@ -121,7 +158,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_save'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_cbt'])) {
     check_csrf();
     $cid = (int)$_POST['cand_id'];
-    $cand = one('SELECT * FROM candidates WHERE id=? AND intake_id=?', [$cid, $intake['id']]);
+    $cand = one('SELECT * FROM candidates WHERE id=? AND intake_id=? AND is_international=0', [$cid, $intake['id']]);
     if ($cand && !empty($_FILES['cbt']) && $_FILES['cbt']['error'] === UPLOAD_ERR_OK) {
         if (!is_dir(UPLOAD_CBT_DIR)) mkdir(UPLOAD_CBT_DIR, 0775, true);
         $name = date('Ymd_His') . '_' . preg_replace('/[^A-Za-z0-9._-]/','_', basename($_FILES['cbt']['name']));
@@ -157,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_marks_excel'])
             $dept = trim($r['dept_reg_no'] ?? '');
             $mark = $r['written_marks'] ?? null;
             if (!$dept || $mark === null) continue;
-            $res = q('UPDATE candidates SET written_marks=? WHERE intake_id=? AND dept_reg_no=?',
+            $res = q('UPDATE candidates SET written_marks=? WHERE intake_id=? AND dept_reg_no=? AND is_international=0',
                 [(float)$mark, $intake['id'], $dept]);
             if ($res->rowCount()) $saved++;
         }
@@ -172,7 +209,7 @@ if ($tab === 'export' && isset($_GET['download']) && $intake) {
                         s1_correct, s1_wrong, s2_correct, s2_wrong,
                         s3_correct, s3_wrong, s4_correct, s4_wrong
                  FROM candidates
-                 WHERE intake_id=? AND screening_status='Yes'
+                 WHERE intake_id=? AND is_international=0 AND screening_status='Yes'
                  ORDER BY serial_no, id", [$intake['id']]);
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="marks_sectional_' . date('Ymd') . '.csv"');
@@ -213,7 +250,7 @@ $frozen = $intake ? (bool)setting('marks_frozen_' . $intake['id']) : false;
 // Build filtered list
 $rows = [];
 if ($intake) {
-    $where = ['intake_id = ?', "screening_status = 'Yes'"];
+    $where = ['intake_id = ?', 'is_international = 0', "screening_status = 'Yes'"];
     $params = [$intake['id']];
     if ($q !== '') {
         $where[] = '(dept_reg_no LIKE ? OR name LIKE ? OR email LIKE ?)';
@@ -296,13 +333,17 @@ render_header('Marks Entry', $u);
         <td><?= h($r['name']) ?></td>
         <?php for ($s = 1; $s <= 4; $s++): ?>
           <td class="border-l border-slate-200">
-            <input type="number" min="0" step="1" name="s<?= $s ?>_correct[<?= (int)$r['id'] ?>]"
-                   value="<?= h($r['s'.$s.'_correct']) ?>" placeholder="—" class="w-16 text-sm text-center"
+            <input type="number" min="0" max="15" step="1" name="s<?= $s ?>_correct[<?= (int)$r['id'] ?>]"
+                   value="<?= h($r['s'.$s.'_correct']) ?>" placeholder="—"
+                   class="w-16 text-sm text-center sec-inp"
+                   data-section="<?= $s ?>" data-kind="c"
                    <?= $frozen ? 'disabled' : '' ?>>
           </td>
           <td>
-            <input type="number" min="0" step="1" name="s<?= $s ?>_wrong[<?= (int)$r['id'] ?>]"
-                   value="<?= h($r['s'.$s.'_wrong']) ?>" placeholder="—" class="w-16 text-sm text-center"
+            <input type="number" min="0" max="15" step="1" name="s<?= $s ?>_wrong[<?= (int)$r['id'] ?>]"
+                   value="<?= h($r['s'.$s.'_wrong']) ?>" placeholder="—"
+                   class="w-16 text-sm text-center sec-inp"
+                   data-section="<?= $s ?>" data-kind="w"
                    <?= $frozen ? 'disabled' : '' ?>>
           </td>
         <?php endfor; ?>
@@ -319,7 +360,7 @@ render_header('Marks Entry', $u);
 
   <?php if ($rows): ?>
   <div class="mt-4">
-    <p class="text-xs text-slate-500">Tip: enter the number of correct and wrong answers per section. Saving will also freeze marks for this intake.</p>
+    <p class="text-xs text-slate-500">Tip: enter the number of correct and wrong answers per section. Each section has 15 questions, so correct + wrong cannot exceed 15. Saving will also freeze marks for this intake.</p>
   </div>
   <?php endif; ?>
 </form>
@@ -403,13 +444,26 @@ $(document).on('keydown', e => {
   const cache = new Map();     // cid -> { field: stringValue }
   const timers = new Map();    // cid -> debounce timer id
   const inflight = new Set();  // cid set currently posting
+  const rowInputs = new Map(); // cid -> { field: inputEl } (cached refs to skip per-keystroke querySelector)
+
+  function inputsFor(tr) {
+    const cid = parseInt(tr.dataset.cid, 10);
+    let map = rowInputs.get(cid);
+    if (!map) {
+      map = {};
+      tr.querySelectorAll('input.sec-inp').forEach(el => {
+        const s = el.dataset.section, k = el.dataset.kind;
+        if (s && k) map['s' + s + (k === 'c' ? '_correct' : '_wrong')] = el;
+      });
+      rowInputs.set(cid, map);
+    }
+    return map;
+  }
 
   function readRow(tr) {
+    const map = inputsFor(tr);
     const data = {};
-    FIELDS.forEach(f => {
-      const el = tr.querySelector('input[name="' + f + '[' + tr.dataset.cid + ']"]');
-      data[f] = el ? el.value.trim() : '';
-    });
+    FIELDS.forEach(f => { data[f] = map[f] ? map[f].value.trim() : ''; });
     return data;
   }
 
@@ -494,13 +548,44 @@ $(document).on('keydown', e => {
     cache.set(parseInt(tr.dataset.cid, 10), readRow(tr));
   });
 
+  // Validate one section's correct+wrong ≤ 15. Only the edited section is checked per keystroke
+  // to keep typing cheap on large tables. Returns true if THIS section is OK.
+  function validateSection(tr, s) {
+    const map = inputsFor(tr);
+    const cEl = map['s' + s + '_correct'];
+    const wEl = map['s' + s + '_wrong'];
+    if (!cEl || !wEl) return true;
+    const c = parseInt(cEl.value || '0', 10) || 0;
+    const w = parseInt(wEl.value || '0', 10) || 0;
+    const bad = (c + w) > 15;
+    const tip = bad ? 'Section ' + s + ': correct + wrong = ' + (c + w) + ' (max 15)' : '';
+    cEl.classList.toggle('section-invalid', bad);
+    wEl.classList.toggle('section-invalid', bad);
+    cEl.title = tip;
+    wEl.title = tip;
+    return !bad;
+  }
+
+  function rowHasInvalidSection(tr) {
+    return tr.querySelector('input.section-invalid') !== null;
+  }
+
   // `input` covers keystrokes, paste, spinner arrows, and programmatic changes.
   document.getElementById('rowsBody').addEventListener('input', e => {
     const el = e.target;
-    if (!el.matches('input[type="number"]')) return;
+    if (!el.classList.contains('sec-inp')) return;
     const tr = el.closest('tr[data-cid]');
     if (!tr) return;
     const cid = parseInt(tr.dataset.cid, 10);
+    const sec = parseInt(el.dataset.section, 10);
+    const sectionOk = validateSection(tr, sec);
+    if (!sectionOk || rowHasInvalidSection(tr)) {
+      // Cancel any pending autosave — server would reject anyway.
+      if (timers.has(cid)) { clearTimeout(timers.get(cid)); timers.delete(cid); }
+      markRow(tr, 'error');
+      setStatus('Section total > 15 — fix the highlighted cells', 'error');
+      return;
+    }
     const current = readRow(tr);
     if (rowDiffers(cid, current)) {
       markRow(tr, 'saving');
@@ -523,6 +608,7 @@ $(document).on('keydown', e => {
 tr.row-saving  input[type="number"] { background: #fef9c3; }
 tr.row-saved   input[type="number"] { background: #ecfdf5; }
 tr.row-error   input[type="number"] { background: #fee2e2; }
+input.section-invalid { background: #fee2e2 !important; border-color: #dc2626 !important; }
 </style>
 
 <?php elseif ($tab === 'excel'): ?>
@@ -555,7 +641,7 @@ tr.row-error   input[type="number"] { background: #fee2e2; }
                                 s1_correct, s1_wrong, s2_correct, s2_wrong,
                                 s3_correct, s3_wrong, s4_correct, s4_wrong
                          FROM candidates
-                         WHERE intake_id=? AND screening_status='Yes'
+                         WHERE intake_id=? AND is_international=0 AND screening_status='Yes'
                          ORDER BY serial_no, id", [$intake['id']]);
   }
   $fmt = function($v) {

@@ -49,7 +49,7 @@ if ($action === 'init') {
     if ($size <= 0 || $size > 25 * 1024 * 1024) {
         json_out(['ok' => false, 'error' => 'Size out of range (max 25 MB)'], 400);
     }
-    $cand = one('SELECT id FROM candidates WHERE intake_id=? AND dept_reg_no=?', [$intake['id'], $dept]);
+    $cand = one('SELECT id FROM candidates WHERE intake_id=? AND dept_reg_no=? AND is_international=0', [$intake['id'], $dept]);
     if (!$cand) json_out(['ok' => false, 'error' => "No candidate for '$dept'"], 404);
 
     $uid = bin2hex(random_bytes(16));
@@ -94,7 +94,7 @@ if ($action === 'finalize') {
     $ext  = (string)$meta['ext'];
     $expected_size = (int)$meta['size'];
 
-    $cand = one('SELECT id, dept_reg_no, photo FROM candidates WHERE intake_id=? AND dept_reg_no=?', [$intake['id'], $dept]);
+    $cand = one('SELECT id, dept_reg_no, photo FROM candidates WHERE intake_id=? AND dept_reg_no=? AND is_international=0', [$intake['id'], $dept]);
     if (!$cand) json_out(['ok' => false, 'error' => 'Candidate no longer exists'], 404);
 
     $safe_reg = preg_replace('/[^A-Za-z0-9_-]/', '_', $cand['dept_reg_no']);

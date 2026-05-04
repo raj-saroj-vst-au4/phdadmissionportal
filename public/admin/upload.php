@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_FILES['excel']['name'])) {
         foreach ($records as $r) {
             $dept = trim($r['dept_reg_no'] ?? '');
             if (!$dept) { $skip++; continue; }
-            $exists = one('SELECT id FROM candidates WHERE intake_id=? AND dept_reg_no=?', [$intake['id'],$dept]);
+            $exists = one('SELECT id FROM candidates WHERE intake_id=? AND dept_reg_no=? AND is_international=0', [$intake['id'],$dept]);
             $stmt->execute([
                 $intake['id'],
                 (int)($r['serial_no'] ?? 0) ?: null,
@@ -100,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_FILES['excel']['name'])) {
                 $r['disabled'] ?? null,
                 $r['cfti'] ?? null,
                 $r['iit_btech'] ?? null,
-                $r['categories_applied'] ?? null,
+                normalize_categories_applied($r['categories_applied'] ?? null),
                 $r['academic_record'] ?? null,
                 $r['qualifying_exam'] ?? null,
                 $r['exam_status'] ?? null,

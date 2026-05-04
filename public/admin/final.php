@@ -10,7 +10,7 @@ if (!$intake) { flash_set('No active intake.', 'error'); redirect('/phdportal/da
 // Freeze handler
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['freeze_final'])) {
     check_csrf();
-    $pending = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND screening_status='Yes' AND final_status='Pending'", [$intake['id']])['c'];
+    $pending = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status='Yes' AND final_status='Pending'", [$intake['id']])['c'];
     if ($pending > 0) {
         flash_set("Cannot freeze: $pending candidate(s) still have Pending final status.", 'error');
     } else {
@@ -33,11 +33,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unfreeze_final'])) {
     redirect('/phdportal/admin/final.php');
 }
 
+// AM Global cutoff: persisted per intake. Freeze stores the value; unfreeze (passcode-protected) clears it.
+$amgKey = 'amg_cutoff_' . $intake['id'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['freeze_amg_cutoff'])) {
+    check_csrf();
+    $val = trim($_POST['amg_cutoff_value'] ?? '');
+    if ($val === '' || !is_numeric($val)) {
+        flash_set('Enter a valid AM Global Cutoff before freezing.', 'error');
+    } else {
+        set_setting($amgKey, $val);
+        flash_set('AM Global Cutoff frozen at ' . $val . '.', 'success');
+    }
+    redirect('/phdportal/admin/final.php');
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unfreeze_amg_cutoff'])) {
+    check_csrf();
+    $fresh = one('SELECT password_hash FROM users WHERE id=?', [$u['id']]);
+    if (!$fresh || !password_verify($_POST['passcode'] ?? '', $fresh['password_hash'])) {
+        flash_set('Admin passcode is incorrect.', 'error');
+    } else {
+        q('DELETE FROM settings WHERE `key`=?', [$amgKey]);
+        flash_set('AM Global Cutoff unfrozen.', 'success');
+    }
+    redirect('/phdportal/admin/final.php');
+}
+$amgCutoff = setting($amgKey);
+$amgFrozen = $amgCutoff !== null && $amgCutoff !== '';
+
 // Per-panel means (computed up-front so both export and view paths can use them)
 $panelMeansRows = all(
     "SELECT p.code, p.area, AVG(m.total_marks) mean
      FROM panels p
-     LEFT JOIN candidates c ON c.panel_code = p.code AND c.intake_id = ?
+     LEFT JOIN candidates c ON c.panel_code = p.code AND c.intake_id = ? AND c.is_international = 0
      LEFT JOIN interview_marks m ON m.candidate_id = c.id
      GROUP BY p.code, p.area
      ORDER BY p.code", [$intake['id']]);
@@ -45,7 +72,7 @@ $panelMeanByCode = [];
 foreach ($panelMeansRows as $pm) $panelMeanByCode[$pm['code']] = $pm['mean'] !== null ? (float)$pm['mean'] : null;
 
 $meanRow = one("SELECT AVG(m.total_marks) mean FROM interview_marks m
-    JOIN candidates c ON c.id=m.candidate_id WHERE c.intake_id=?", [$intake['id']]);
+    JOIN candidates c ON c.id=m.candidate_id WHERE c.intake_id=? AND c.is_international=0", [$intake['id']]);
 $depMean = $meanRow['mean'] !== null ? round($meanRow['mean'], 2) : null;
 
 $adjusted = function(array $r) use ($panelMeanByCode): ?float {
@@ -60,6 +87,125 @@ $adjustedGlobal = function(array $r) use ($adjusted, $depMean): ?float {
     return $a + (float)$depMean;
 };
 
+// AM Global cutoff is a base GN value. Effective threshold per candidate = cutoff * multiplier
+// for their effective category. Same scheme as the written-marks cutoff in cutoff.php.
+const AMG_CUTOFF_MULTIPLIERS = [
+    'GN' => 1.0, 'EWS' => 1.0,
+    'OBC-NC' => 0.9,
+    'SC' => 0.6667, 'ST' => 0.6667, 'PWD' => 0.6667,
+];
+
+$amgEffectiveCat = function(array $r): ?string {
+    if (($r['disabled'] ?? null) === 'Y') return 'PWD';
+    if (($r['ews'] ?? null) === 'Y') return 'EWS';
+    return $r['birth_category'] ?? null;
+};
+$amgMultiplierFor = function(?string $ec): float {
+    return AMG_CUTOFF_MULTIPLIERS[$ec] ?? 1.0;
+};
+
+// Auto-select for All: one pass that handles TA and Non-TA together.
+//   Eligibility (shared): interview marks present, unanimously recommended (every panelist),
+//                         AM Global >= saved cutoff.
+//   TA candidates  -> grouped by EFFECTIVE birth category, ranked by AM Global desc, capped at
+//                     intake.ta_seats_<cat>; tagged "<Cat>-TA-<n>" (e.g. GN-TA-1, OBC-NC-TA-2).
+//   Non-TA         -> grouped by applied category (SF, FA, EX, ...), no seat cap;
+//                     tagged "<AppliedCat>-<n>" (e.g. SF-1, FA-1).
+// Skipped when final selection is frozen, and requires a saved AM Global Cutoff.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_select_all'])) {
+    check_csrf();
+    if ((bool)setting('final_frozen_' . $intake['id'])) {
+        flash_set('Final selection is frozen. Cannot auto-select.', 'error');
+        redirect('/phdportal/admin/final.php');
+    }
+    $cutoffSetting = setting('amg_cutoff_' . $intake['id']);
+    if ($cutoffSetting === null || $cutoffSetting === '' || !is_numeric($cutoffSetting)) {
+        flash_set('Freeze the AM Global Cutoff first — auto-select needs a saved cutoff value.', 'error');
+        redirect('/phdportal/admin/final.php');
+    }
+    $cutoffVal = (float)$cutoffSetting;
+
+    $intakeFull = one('SELECT * FROM intakes WHERE id=?', [$intake['id']]);
+    $seatMap = [
+        'GN'     => (int)($intakeFull['ta_seats_gn']  ?? 0),
+        'OBC-NC' => (int)($intakeFull['ta_seats_obc'] ?? 0),
+        'SC'     => (int)($intakeFull['ta_seats_sc']  ?? 0),
+        'ST'     => (int)($intakeFull['ta_seats_st']  ?? 0),
+        'EWS'    => (int)($intakeFull['ta_seats_ews'] ?? 0),
+    ];
+
+    $cands = all("SELECT c.id, c.birth_category, c.ews, c.disabled,
+                         c.categories_applied, c.revised_categories_applied, c.panel_code,
+                         (SELECT AVG(total_marks) FROM interview_marks m WHERE m.candidate_id=c.id) avg_interview,
+                         (SELECT COUNT(*) FROM interview_marks m WHERE m.candidate_id=c.id) interview_count,
+                         (SELECT COALESCE(SUM(recommended),0) FROM interview_marks m WHERE m.candidate_id=c.id) rec_count
+                  FROM candidates c
+                  WHERE c.intake_id=? AND c.is_international=0 AND c.screening_status='Yes'", [$intake['id']]);
+
+    $taByBirthCat = [];      // effective_cat -> [{id, amg}]
+    $nonTaByApplied = [];    // applied_cat   -> [{id, amg}]
+    foreach ($cands as $c) {
+        $applied = normalize_categories_applied(
+            trim((string)($c['revised_categories_applied'] ?? '')) !== ''
+                ? $c['revised_categories_applied']
+                : ($c['categories_applied'] ?? '')
+        );
+        if ($applied === '' || $applied === null) continue;
+        $intCount = (int)$c['interview_count'];
+        $recCount = (int)$c['rec_count'];
+        if ($intCount === 0 || $recCount !== $intCount) continue;
+        $amg = $adjustedGlobal($c);
+        if ($amg === null) continue;
+        // Per-candidate threshold: GN/EWS 100%, OBC-NC 90%, SC/ST/PWD 66.67% of base cutoff.
+        $ec = $amgEffectiveCat($c);
+        $threshold = $cutoffVal * $amgMultiplierFor($ec);
+        if ($amg < $threshold) continue;
+
+        if ($applied === 'TA') {
+            if (!isset($seatMap[$ec])) continue; // no TA seats defined for this category
+            $taByBirthCat[$ec][] = ['id' => (int)$c['id'], 'amg' => $amg];
+        } else {
+            $nonTaByApplied[$applied][] = ['id' => (int)$c['id'], 'amg' => $amg];
+        }
+    }
+
+    $totalSelected = 0;
+    $taCounts = [];
+    foreach ($taByBirthCat as $cat => $list) {
+        usort($list, fn($a, $b) => $b['amg'] <=> $a['amg']);
+        $assign = min(count($list), $seatMap[$cat]);
+        for ($i = 0; $i < $assign; $i++) {
+            $tag = $cat . '-TA-' . ($i + 1);
+            q("UPDATE candidates SET final_status='Selected', birth_category_number=? WHERE id=? AND intake_id=?",
+              [$tag, $list[$i]['id'], $intake['id']]);
+        }
+        if ($assign > 0) $taCounts[$cat] = $assign;
+        $totalSelected += $assign;
+    }
+
+    $nonTaCounts = [];
+    foreach ($nonTaByApplied as $applied => $list) {
+        usort($list, fn($a, $b) => $b['amg'] <=> $a['amg']);
+        foreach ($list as $i => $row) {
+            $tag = $applied . '-' . ($i + 1);
+            q("UPDATE candidates SET final_status='Selected', birth_category_number=? WHERE id=? AND intake_id=?",
+              [$tag, $row['id'], $intake['id']]);
+        }
+        $nonTaCounts[$applied] = count($list);
+        $totalSelected += count($list);
+    }
+
+    if ($totalSelected === 0) {
+        flash_set('Auto-select: no eligible candidates met the criteria.', 'info');
+    } else {
+        $parts = [];
+        foreach ($taCounts as $cat => $n) $parts[] = "$cat-TA: $n";
+        foreach ($nonTaCounts as $cat => $n) $parts[] = "$cat: $n";
+        flash_set("Auto-select: $totalSelected selected (" . implode(', ', $parts) . ').', 'success');
+    }
+    redirect('/phdportal/admin/final.php');
+}
+
 // CSV export
 if (isset($_GET['export'])) {
     $kind = $_GET['export']; // 'simple' | 'formatb' | 'summary'
@@ -70,11 +216,14 @@ if (isset($_GET['export'])) {
                  (SELECT SUM(m.recommended) FROM interview_marks m WHERE m.candidate_id=c.id) rec_count,
                  c.final_status, c.final_category, c.birth_category_number
                  FROM candidates c
-                 WHERE c.intake_id=? AND c.screening_status='Yes'
+                 WHERE c.intake_id=? AND c.is_international=0 AND c.screening_status='Yes'
                  ORDER BY c.final_status, avg_interview DESC", [$intake['id']]);
 
-    $appliedCat = fn($r) => trim((string)($r['revised_categories_applied'] ?? '')) !== ''
-        ? $r['revised_categories_applied'] : ($r['categories_applied'] ?? '');
+    $appliedCat = fn($r) => normalize_categories_applied(
+        trim((string)($r['revised_categories_applied'] ?? '')) !== ''
+            ? $r['revised_categories_applied']
+            : ($r['categories_applied'] ?? '')
+    );
 
     header('Content-Type: text/csv; charset=utf-8');
 
@@ -90,7 +239,7 @@ if (isset($_GET['export'])) {
             if ($r['final_status'] === 'Selected' || $r['final_status'] === 'Waitlisted') {
                 $adj = $adjusted($r); $adjG = $adjustedGlobal($r);
                 fputcsv($out, [$i++, $r['dept_reg_no'], $r['name'], $r['gender'],
-                    $r['birth_category'], $r['ews'], $r['disabled'], $r['categories_applied'],
+                    $r['birth_category'], $r['ews'], $r['disabled'], normalize_categories_applied($r['categories_applied']),
                     $r['panel_code'], $r['panel_area'], $r['qualifying_exam'], $r['gate_score'],
                     $r['written_marks'],
                     $r['avg_interview'] !== null ? round($r['avg_interview'], 2) : '',
@@ -157,20 +306,40 @@ if (isset($_GET['export'])) {
 
 $frozen = (bool)setting('final_frozen_' . $intake['id']);
 
-$rows = all("SELECT c.*,
-    (SELECT AVG(total_marks) FROM interview_marks m WHERE m.candidate_id=c.id) avg_interview
-    FROM candidates c
-    WHERE c.intake_id=? AND c.screening_status='Yes'", [$intake['id']]);
+// Auto-rule: a candidate who has been interviewed but received zero recommendations from any
+// panelist is marked Not Selected. Only flips Pending rows so admin overrides (Selected /
+// Waitlisted / a manual Not Selected) stay intact, and skipped while the page is frozen.
+if (!$frozen) {
+    q("UPDATE candidates c
+       JOIN (
+         SELECT candidate_id, COUNT(*) cnt, COALESCE(SUM(recommended),0) rec
+         FROM interview_marks GROUP BY candidate_id
+       ) m ON m.candidate_id = c.id
+       SET c.final_status = 'Not Selected'
+       WHERE c.intake_id = ?
+         AND c.is_international = 0
+         AND c.screening_status = 'Yes'
+         AND c.final_status = 'Pending'
+         AND m.cnt > 0
+         AND m.rec = 0", [$intake['id']]);
+}
 
-usort($rows, function($a, $b) use ($adjusted) {
-    $aa = $adjusted($a); $bb = $adjusted($b);
+$rows = all("SELECT c.*,
+    (SELECT AVG(total_marks) FROM interview_marks m WHERE m.candidate_id=c.id) avg_interview,
+    (SELECT COUNT(*) FROM interview_marks m WHERE m.candidate_id=c.id) interview_count,
+    (SELECT SUM(recommended) FROM interview_marks m WHERE m.candidate_id=c.id) rec_count
+    FROM candidates c
+    WHERE c.intake_id=? AND c.is_international=0 AND c.screening_status='Yes'", [$intake['id']]);
+
+usort($rows, function($a, $b) use ($adjustedGlobal) {
+    $aa = $adjustedGlobal($a); $bb = $adjustedGlobal($b);
     if ($aa === null && $bb === null) return 0;
     if ($aa === null) return 1;
     if ($bb === null) return -1;
     return $bb <=> $aa;
 });
 
-$pending = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND screening_status='Yes' AND final_status='Pending'", [$intake['id']])['c'];
+$pending = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status='Yes' AND final_status='Pending'", [$intake['id']])['c'];
 
 render_header('Final Shortlisting', $u);
 ?>
@@ -259,6 +428,82 @@ $(document).on('keydown', e => { if (e.key === 'Escape') $('#unfreezeBackdrop').
 </script>
 <?php endif; ?>
 
+<style>
+  /* Light green flag: interview marks present and every panelist recommended the candidate. */
+  #finalTable tr.row-recommended > td { background: #dcfce7; }
+  #finalTable tr.row-recommended:hover > td { background: #bbf7d0; }
+  /* Light red flag: interview marks present and zero panelists recommended the candidate. */
+  #finalTable tr.row-not-recommended > td { background: #fee2e2; }
+  #finalTable tr.row-not-recommended:hover > td { background: #fecaca; }
+  /* Rows whose AM Global is below the entered cutoff (or have no AM Global value). */
+  #finalTable tr.row-below-cutoff > td { color: #94a3b8; }
+  #finalTable tr.row-below-cutoff.row-recommended > td { background: #f1f5f9; }
+  #finalTable tr.row-below-cutoff.row-not-recommended > td { background: #f1f5f9; }
+</style>
+
+<div class="card mb-3 flex items-end gap-3 flex-wrap">
+  <div>
+    <label class="text-xs font-medium" for="amgCutoff">AM Global Cutoff (GN base)</label>
+    <input type="number" step="0.01" id="amgCutoff" class="w-32 text-sm"
+           value="<?= h($amgCutoff ?? '') ?>" placeholder="e.g. 70.00"
+           <?= $amgFrozen ? 'disabled' : '' ?>>
+    <p class="text-[10px] text-slate-500 mt-0.5">GN/EWS: 100%, OBC-NC: 90%, SC/ST/PWD: 66.67%</p>
+  </div>
+  <div class="text-xs text-slate-500 self-center">
+    <span id="amgCount"><?= count($rows) ?></span> / <?= count($rows) ?> at or above cutoff
+  </div>
+  <?php if (!$amgFrozen): ?>
+    <button type="button" id="amgApply" class="btn btn-primary text-xs">Apply</button>
+    <button type="button" id="amgClear" class="btn btn-secondary text-xs">Clear</button>
+    <form method="post" class="inline" id="amgFreezeForm" onsubmit="return amgFreezeConfirm();">
+      <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+      <input type="hidden" name="freeze_amg_cutoff" value="1">
+      <input type="hidden" name="amg_cutoff_value" id="amgFreezeValue" value="">
+      <button type="submit" class="btn btn-danger text-xs">
+        <svg class="inline" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Freeze
+      </button>
+    </form>
+  <?php else: ?>
+    <span class="inline-flex items-center gap-1 text-rose-700 text-xs font-semibold self-center">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Frozen at <?= h($amgCutoff) ?>
+    </span>
+    <button type="button" class="btn btn-secondary text-xs" onclick="$('#amgUnfreezeBackdrop').removeClass('hidden')">Unfreeze</button>
+  <?php endif; ?>
+
+  <?php if ($amgFrozen && !$frozen): ?>
+    <form method="post" class="inline ml-auto" onsubmit="return confirm('Auto-select all eligible candidates (interview marks present, unanimously recommended, AM Global ≥ category-adjusted cutoff)?\n\nBase cutoff: <?= h($amgCutoff) ?>\n• GN / EWS: 100% (≥ <?= number_format((float)$amgCutoff, 2) ?>)\n• OBC-NC: 90% (≥ <?= number_format((float)$amgCutoff * 0.9, 2) ?>)\n• SC / ST / PWD: 66.67% (≥ <?= number_format((float)$amgCutoff * 0.6667, 2) ?>)\n\n• TA: capped at TA seats per birth category, tagged like GN-TA-1.\n• Non-TA: no cap, tagged like SF-1, FA-1.\n\nExisting Selected statuses may be overwritten.');">
+      <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+      <input type="hidden" name="auto_select_all" value="1">
+      <button type="submit" class="btn btn-primary text-xs">Auto-Select for All</button>
+    </form>
+  <?php endif; ?>
+</div>
+
+<?php if ($amgFrozen): ?>
+<div id="amgUnfreezeBackdrop" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+    <h3 class="text-lg font-semibold text-amber-700 mb-2">Unfreeze AM Global Cutoff</h3>
+    <p class="text-sm text-slate-700 mb-3">Re-enable editing of the AM Global Cutoff for this intake.</p>
+    <form method="post" autocomplete="off">
+      <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+      <input type="hidden" name="unfreeze_amg_cutoff" value="1">
+      <label class="text-xs font-medium">Admin password:</label>
+      <input type="password" name="passcode" required autocomplete="new-password" class="mt-1">
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" class="btn btn-secondary" onclick="$('#amgUnfreezeBackdrop').addClass('hidden')">Cancel</button>
+        <button class="btn btn-danger">Unfreeze</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+$('#amgUnfreezeBackdrop').on('click', function(e){ if (e.target === this) $(this).addClass('hidden'); });
+$(document).on('keydown', e => { if (e.key === 'Escape') $('#amgUnfreezeBackdrop').addClass('hidden'); });
+</script>
+<?php endif; ?>
+
 <div class="card p-0 overflow-x-auto">
 <table class="data-table w-full [&_th]:!text-center [&_td]:!text-center" id="finalTable">
 <thead><tr>
@@ -267,8 +512,23 @@ $(document).on('keydown', e => { if (e.key === 'Escape') $('#unfreezeBackdrop').
   <th>Status</th><th>App. Category</th><th>Birth Category</th><th>Birth Cat #</th>
 </tr></thead>
 <tbody>
-<?php foreach ($rows as $r): ?>
-<tr>
+<?php
+  foreach ($rows as $r):
+    $intCount = (int)($r['interview_count'] ?? 0);
+    $recCount = (int)($r['rec_count'] ?? 0);
+    // Unanimous recommendation: every panelist who interviewed the candidate recommended them.
+    $allRecommended = $r['avg_interview'] !== null && $intCount > 0 && $recCount === $intCount;
+    // Symmetric flag: interviewed but no panelist recommended.
+    $noneRecommended = $r['avg_interview'] !== null && $intCount > 0 && $recCount === 0;
+    $rowFlag = $allRecommended ? 'row-recommended' : ($noneRecommended ? 'row-not-recommended' : '');
+?>
+<?php
+  $adjGRow = $adjustedGlobal($r);
+  $rowMult = $amgMultiplierFor($amgEffectiveCat($r));
+?>
+<tr class="<?= $rowFlag ?>"
+    data-amg="<?= $adjGRow !== null ? round($adjGRow, 2) : '' ?>"
+    data-mult="<?= h(number_format($rowMult, 4, '.', '')) ?>">
   <td class="font-mono text-xs"><a href="/phdportal/admin/candidate.php?id=<?= (int)$r['id'] ?>" class="text-indigo-600 hover:underline"><?= h($r['dept_reg_no']) ?></a></td>
   <td><?= h($r['name']) ?></td>
   <td class="text-xs">
@@ -308,14 +568,18 @@ $(document).on('keydown', e => { if (e.key === 'Escape') $('#unfreezeBackdrop').
     <?php endif; ?>
   </td>
   <?php
-    $applied = trim((string)($r['revised_categories_applied'] ?? '')) !== ''
-        ? $r['revised_categories_applied'] : ($r['categories_applied'] ?? '');
+    $applied = normalize_categories_applied(
+        trim((string)($r['revised_categories_applied'] ?? '')) !== ''
+            ? $r['revised_categories_applied']
+            : ($r['categories_applied'] ?? '')
+    );
     $isRevised = trim((string)($r['revised_categories_applied'] ?? '')) !== '';
+    $origForTitle = normalize_categories_applied($r['categories_applied'] ?? null);
   ?>
   <td>
-    <?php if ($applied !== ''): ?>
+    <?php if ($applied !== '' && $applied !== null): ?>
       <span class="text-xs font-semibold"><?= h($applied) ?></span>
-      <?php if ($isRevised): ?><span class="ml-1 text-[10px] text-indigo-600 font-medium" title="Revised from <?= h($r['categories_applied'] ?? '—') ?>">(revised)</span><?php endif; ?>
+      <?php if ($isRevised): ?><span class="ml-1 text-[10px] text-indigo-600 font-medium" title="Revised from <?= h($origForTitle ?: '—') ?>">(revised)</span><?php endif; ?>
     <?php else: ?>
       <span class="text-slate-400">—</span>
     <?php endif; ?>
@@ -363,6 +627,61 @@ function postFinal(id, field, value) {
 }
 $('.status-sel').on('change', function(){ postFinal($(this).data('id'),'final_status',$(this).val()); });
 $('.birthnum-inp').on('change', function(){ postFinal($(this).data('id'),'birth_category_number',$(this).val()); });
+
+// AM Global cutoff filter — entered value is the BASE (GN) cutoff. Each row is compared against
+// base * its category multiplier (data-mult): GN/EWS 1.0, OBC-NC 0.9, SC/ST/PWD 0.6667.
+// Apply on click / Enter (live filtering removed so partial typed values don't jitter the table).
+// Rows without an AM Global (no interview marks yet) are also marked below-cutoff once any value is set.
+// `appliedCutoff` tracks the last value that actually filtered the table — used to warn at freeze
+// time when the input has been edited but Apply hasn't been re-run.
+let amgAppliedCutoff = null; // null = no filter currently applied
+window.amgApplyFilter = (function(){
+  const input = document.getElementById('amgCutoff');
+  const countEl = document.getElementById('amgCount');
+  const applyBtn = document.getElementById('amgApply');
+  const clearBtn = document.getElementById('amgClear');
+  const rows = Array.from(document.querySelectorAll('#finalTable tbody tr[data-amg]'));
+  const apply = () => {
+    const raw = input.value.trim();
+    const cutoff = raw === '' ? null : parseFloat(raw);
+    let above = 0;
+    rows.forEach(tr => {
+      const v = tr.dataset.amg;
+      const mult = parseFloat(tr.dataset.mult || '1') || 1;
+      const has = v !== '';
+      const threshold = cutoff !== null ? cutoff * mult : null;
+      const below = threshold !== null && (!has || parseFloat(v) < threshold);
+      tr.classList.toggle('row-below-cutoff', below);
+      if (threshold === null || (has && parseFloat(v) >= threshold)) above++;
+    });
+    countEl.textContent = above;
+    amgAppliedCutoff = cutoff;
+  };
+  if (applyBtn) applyBtn.addEventListener('click', apply);
+  if (clearBtn) clearBtn.addEventListener('click', () => { input.value = ''; apply(); });
+  if (input && !input.disabled) {
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+  }
+  // Reflect any saved/frozen cutoff on first paint.
+  if (input && input.value.trim() !== '') apply();
+  return apply;
+})();
+
+function amgFreezeConfirm() {
+  const v = document.getElementById('amgCutoff').value.trim();
+  if (v === '' || isNaN(parseFloat(v))) { alert('Enter a valid AM Global Cutoff first.'); return false; }
+  const entered = parseFloat(v);
+  // Warn when the table is currently filtered by a different value (or not filtered at all).
+  // Same-number compare covers cases like "70" vs "70.0" — what matters is the numeric value.
+  if (amgAppliedCutoff === null || amgAppliedCutoff !== entered) {
+    const appliedTxt = amgAppliedCutoff === null ? 'none (Apply not run)' : amgAppliedCutoff;
+    if (!confirm('You are about to freeze the cutoff at ' + entered + ', but the table is currently showing ' + appliedTxt + '.\n\nFreeze ' + entered + ' anyway?')) return false;
+  } else if (!confirm('Freeze AM Global Cutoff at ' + entered + '? Locks the value for this intake until an admin unfreezes.')) {
+    return false;
+  }
+  document.getElementById('amgFreezeValue').value = v;
+  return true;
+}
 
 function downloadFinalPdf() {
   const { jsPDF } = window.jspdf;

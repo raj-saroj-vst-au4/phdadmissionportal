@@ -20,6 +20,7 @@ define('UPLOAD_PHOTO_DIR', PUBLIC_ROOT . '/uploads/photos');
 
 define('PYTHON_BIN', '/usr/bin/python3');
 define('EXTRACT_SCRIPT', APP_ROOT . '/scripts/extract_excel.py');
+define('EXTRACT_SCRIPT_INTL', APP_ROOT . '/scripts/extract_excel_intl.py');
 
 define('FINAL_CATEGORIES', ['TA/RA','SF','EX','CT','TAP','FA','SW']);
 define('BIRTH_CATEGORIES', ['GN','OBC-NC','SC','ST','EWS','PWD']);

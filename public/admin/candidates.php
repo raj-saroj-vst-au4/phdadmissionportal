@@ -10,7 +10,7 @@ $intake = active_intake();
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['shortlist_all_yes'])) {
     check_csrf();
     if ($intake && !(bool)setting('shortlist_frozen_' . $intake['id'])) {
-        $bw = ['intake_id = ?'];
+        $bw = ['intake_id = ?', 'is_international = 0'];
         $bp = [$intake['id']];
         $bq = trim($_POST['q'] ?? '');
         $bs = $_POST['shortlist'] ?? '';
@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['shortlist_all_yes']))
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['freeze_shortlist'])) {
     check_csrf();
     if ($intake) {
-        $undecided = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND screening_status IN ('Pending','Doubtful')", [$intake['id']])['c'];
+        $undecided = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status IN ('Pending','Doubtful')", [$intake['id']])['c'];
         if ($undecided > 0) {
             flash_set("Cannot freeze: $undecided candidate(s) still have Pending/Doubtful status.", 'error');
         } else {
@@ -67,11 +67,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unfreeze_shortlist'])
 // Preflight check used before releasing Rejected exports.
 // Returns null if OK, else an error message string.
 function rejected_export_block_reason(int $intake_id): ?string {
-    $und = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND screening_status IN ('Pending','Doubtful')", [$intake_id])['c'];
+    $und = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status IN ('Pending','Doubtful')", [$intake_id])['c'];
     if ($und > 0) {
         return "Cannot export Rejected list: $und candidate(s) still have Pending/Doubtful shortlist status. Resolve all shortlist decisions first.";
     }
-    $missing = all("SELECT dept_reg_no FROM candidates WHERE intake_id=? AND screening_status='No' AND (remark IS NULL OR TRIM(remark)='') ORDER BY serial_no, id", [$intake_id]);
+    $missing = all("SELECT dept_reg_no FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status='No' AND (remark IS NULL OR TRIM(remark)='') ORDER BY serial_no, id", [$intake_id]);
     if ($missing) {
         $names = array_slice(array_column($missing, 'dept_reg_no'), 0, 10);
         $extra = count($missing) - count($names);
@@ -94,7 +94,7 @@ if (isset($_GET['export']) && $intake) {
         }
         $rows = all("SELECT serial_no, dept_reg_no, applicant_id, name, gender, birth_category, ews, disabled,
                      categories_applied, research_interest_selected, written_marks, screening_status
-                     FROM candidates WHERE intake_id=? AND screening_status=? ORDER BY serial_no, id",
+                     FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status=? ORDER BY serial_no, id",
                     [$intake['id'], $status]);
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="shortlist_' . strtolower($status) . '_' . date('Ymd') . '.csv"');
@@ -108,14 +108,14 @@ if (isset($_GET['export']) && $intake) {
 }
 
 $frozen = $intake ? (bool)setting('shortlist_frozen_' . $intake['id']) : false;
-$undecided = $intake ? (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND screening_status IN ('Pending','Doubtful')", [$intake['id']])['c'] : 0;
+$undecided = $intake ? (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status IN ('Pending','Doubtful')", [$intake['id']])['c'] : 0;
 
 $q = trim($_GET['q'] ?? '');
 $shortlist = $_GET['shortlist'] ?? '';
 $cat = $_GET['cat'] ?? '';
 $passedCutoff = $_GET['passed_cutoff'] ?? '';
 
-$where = ['intake_id = ?'];
+$where = ['intake_id = ?', 'is_international = 0'];
 $params = [$intake['id'] ?? 0];
 if ($q !== '') {
     $where[] = '(dept_reg_no LIKE ? OR name LIKE ? OR email LIKE ? OR applicant_id LIKE ?)';
@@ -199,7 +199,7 @@ render_header('Candidates', $u);
   <td><?= category_badge($r['birth_category'] ?? '') ?></td>
   <td><?= h($r['ews']) ?></td>
   <td><?= h($r['disabled']) ?></td>
-  <td class="text-xs"><?= h($r['categories_applied']) ?></td>
+  <td class="text-xs"><?= h(normalize_categories_applied($r['categories_applied'])) ?></td>
   <td class="text-xs max-w-sm truncate" title="<?= h($r['research_interest_selected']) ?>"><?= h($r['research_interest_selected']) ?></td>
   <td><?= status_badge($r['screening_status']) ?></td>
 </tr>

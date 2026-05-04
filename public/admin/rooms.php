@@ -2,10 +2,172 @@
 require __DIR__ . '/../../src/auth.php';
 require __DIR__ . '/../../src/helpers.php';
 $u = require_admin();
-require __DIR__ . '/../../src/layout.php';
 
 $intake = active_intake();
-if (!$intake) { flash_set('No active intake.', 'error'); redirect('/phdportal/dashboard.php'); }
+if (!$intake) {
+    if (isset($_POST['ajax']) || isset($_GET['ajax'])) {
+        json_out(['error' => 'No active intake'], 400);
+    }
+    flash_set('No active intake.', 'error');
+    redirect('/phdportal/dashboard.php');
+}
+
+$isPwdCand = fn($c) => in_array(strtoupper(trim((string)($c['disabled'] ?? ''))), ['YES','Y','1'], true);
+
+// =========================================================================
+// AJAX endpoints — return JSON, exit before any HTML output.
+// =========================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
+    check_csrf();
+    $action = $_POST['ajax'];
+
+    if ($action === 'toggle_scribe') {
+        $cid = (int)($_POST['candidate_id'] ?? 0);
+        $val = !empty($_POST['value']) ? 1 : 0;
+        $cand = $cid ? one('SELECT id FROM candidates WHERE id=? AND intake_id=? AND is_international=0', [$cid, $intake['id']]) : null;
+        if (!$cand) json_out(['error' => 'Invalid candidate'], 400);
+        q('UPDATE candidates SET requires_scribe=? WHERE id=? AND is_international=0', [$val, $cid]);
+        json_out(['ok' => true, 'requires_scribe' => $val]);
+    }
+
+    if ($action === 'prepare_auto') {
+        // Wipe existing assignments for this intake.
+        q('DELETE FROM room_assignments WHERE candidate_id IN (SELECT id FROM candidates WHERE intake_id=? AND is_international=0)', [$intake['id']]);
+
+        $rooms = all('SELECT id, name, capacity, is_pwd_scribe FROM rooms WHERE intake_id=? ORDER BY is_pwd_scribe DESC, id', [$intake['id']]);
+        if (!$rooms) json_out(['plan' => [], 'total' => 0, 'unplaced' => 0, 'scribe_room' => null]);
+
+        $pwdRooms = array_values(array_filter($rooms, fn($r) => (int)$r['is_pwd_scribe'] === 1));
+        $genRooms = array_values(array_filter($rooms, fn($r) => (int)$r['is_pwd_scribe'] === 0));
+
+        // Non-scribe candidates are placed in ascending dept_reg_no order; scribes
+        // are processed in the same order for deterministic room reservation.
+        $cands = all("SELECT id, dept_reg_no, name, disabled, requires_scribe
+                      FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status='Yes'
+                      ORDER BY dept_reg_no, id", [$intake['id']]);
+
+        // Only scribe-required candidates get special treatment (their own PWD room).
+        // Non-scribe PWD candidates are placed alongside general candidates in pure
+        // dept_reg_no order — they get no PWD-room priority.
+        $scribeList  = array_values(array_filter($cands, fn($c) => (int)$c['requires_scribe'] === 1));
+        $regularList = array_values(array_filter($cands, fn($c) => (int)$c['requires_scribe'] !== 1));
+
+        // Reserve one whole PWD room per scribe candidate.
+        // Pick rooms with smallest capacity first (least wasted seats);
+        // on a tie, prefer the LAST one in original PWD-room order (per spec).
+        $pwdSorted = $pwdRooms;
+        $idxMap = [];
+        foreach ($pwdRooms as $i => $r) $idxMap[$r['id']] = $i;
+        usort($pwdSorted, function($a, $b) use ($idxMap) {
+            return ((int)$a['capacity'] - (int)$b['capacity'])
+                ?: ($idxMap[$b['id']] - $idxMap[$a['id']]); // tie → later index first
+        });
+        $scribeRooms = array_slice($pwdSorted, 0, count($scribeList));
+        $reservedIds = array_flip(array_column($scribeRooms, 'id'));
+        $otherPwdRooms = array_values(array_filter($pwdRooms, fn($r) => !isset($reservedIds[$r['id']])));
+
+        $plan = [];
+        $seats = []; $caps = []; $roomNames = [];
+        foreach ($rooms as $r) { $seats[$r['id']] = 1; $caps[$r['id']] = (int)$r['capacity']; $roomNames[$r['id']] = $r['name']; }
+
+        $place = function(array $list, array $rList, string $label) use (&$plan, &$seats, &$caps, &$roomNames) {
+            $unplaced = [];
+            $ri = 0;
+            foreach ($list as $c) {
+                while ($ri < count($rList)) {
+                    $rid = $rList[$ri]['id'];
+                    if ($seats[$rid] - 1 < $caps[$rid]) {
+                        $plan[] = [
+                            'candidate_id' => (int)$c['id'],
+                            'room_id'      => (int)$rid,
+                            'seat_no'      => (string)$seats[$rid],
+                            'room_name'    => $roomNames[$rid],
+                            'cand_label'   => $c['dept_reg_no'] . ' — ' . $c['name'],
+                            'group'        => $label,
+                        ];
+                        $seats[$rid]++;
+                        continue 2;
+                    }
+                    $ri++;
+                }
+                $unplaced[] = $c;
+            }
+            return $unplaced;
+        };
+
+        // Each scribe candidate → solo occupant of one reserved PWD room.
+        $unplacedScribe = [];
+        $scribeRoomNames = [];
+        foreach ($scribeList as $i => $c) {
+            if (!isset($scribeRooms[$i])) { $unplacedScribe[] = $c; continue; }
+            $r = $scribeRooms[$i];
+            $plan[] = [
+                'candidate_id' => (int)$c['id'],
+                'room_id'      => (int)$r['id'],
+                'seat_no'      => '1',
+                'room_name'    => $r['name'],
+                'cand_label'   => $c['dept_reg_no'] . ' — ' . $c['name'],
+                'group'        => 'scribe',
+            ];
+            // Lock the room so nobody else lands here.
+            $caps[$r['id']] = 1;
+            $seats[$r['id']] = 2;
+            $scribeRoomNames[] = $r['name'] . ' (cap ' . (int)$r['capacity'] . ' → ' . $c['dept_reg_no'] . ')';
+        }
+
+        // Regular candidates (general + non-scribe PWD) → general rooms in dept_reg
+        // order; overflow → any unreserved PWD room.
+        $rest = $place($regularList, $genRooms, 'regular');
+        $rest = $place($rest, $otherPwdRooms, 'regular-overflow');
+        $unplacedRegular = $rest;
+
+        json_out([
+            'plan'         => $plan,
+            'total'        => count($plan),
+            'unplaced'     => count($unplacedScribe) + count($unplacedRegular),
+            'scribe_count' => count($scribeList),
+            'scribe_rooms' => $scribeRoomNames,
+            'unplaced_scribe' => count($unplacedScribe),
+        ]);
+    }
+
+    if ($action === 'assign_chunk') {
+        $rows = json_decode($_POST['rows'] ?? '[]', true);
+        if (!is_array($rows) || !$rows) json_out(['ok' => true, 'inserted' => 0]);
+
+        $rids = array_unique(array_map(fn($r) => (int)($r['room_id'] ?? 0), $rows));
+        $cids = array_unique(array_map(fn($r) => (int)($r['candidate_id'] ?? 0), $rows));
+
+        $okRoomSet = [];
+        if ($rids) {
+            $ph = implode(',', array_fill(0, count($rids), '?'));
+            $rs = all("SELECT id FROM rooms WHERE intake_id=? AND id IN ($ph)", array_merge([$intake['id']], $rids));
+            $okRoomSet = array_flip(array_column($rs, 'id'));
+        }
+        $okCSet = [];
+        if ($cids) {
+            $ph = implode(',', array_fill(0, count($cids), '?'));
+            $cs = all("SELECT id FROM candidates WHERE intake_id=? AND is_international=0 AND id IN ($ph)", array_merge([$intake['id']], $cids));
+            $okCSet = array_flip(array_column($cs, 'id'));
+        }
+
+        $inserted = 0;
+        foreach ($rows as $r) {
+            $cid = (int)($r['candidate_id'] ?? 0);
+            $rid = (int)($r['room_id'] ?? 0);
+            $seat = (string)($r['seat_no'] ?? '');
+            if (!isset($okRoomSet[$rid]) || !isset($okCSet[$cid])) continue;
+            q('DELETE FROM room_assignments WHERE candidate_id=?', [$cid]);
+            q('INSERT INTO room_assignments(candidate_id, room_id, seat_no) VALUES(?,?,?)', [$cid, $rid, $seat]);
+            $inserted++;
+        }
+        json_out(['ok' => true, 'inserted' => $inserted]);
+    }
+
+    json_out(['error' => 'Unknown action'], 400);
+}
+
+require __DIR__ . '/../../src/layout.php';
 
 // Add room
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_room'])) {
@@ -31,12 +193,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_room'])) {
     redirect('/phdportal/admin/rooms.php');
 }
 
+// Reset / unassign all
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_assignments'])) {
+    check_csrf();
+    q('DELETE FROM room_assignments WHERE candidate_id IN (SELECT id FROM candidates WHERE intake_id=? AND is_international=0)', [$intake['id']]);
+    flash_set('All room assignments cleared.', 'success');
+    redirect('/phdportal/admin/rooms.php');
+}
+
 // Move a candidate to a different room
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['move_assignment'])) {
     check_csrf();
     $cid = (int)($_POST['candidate_id'] ?? 0);
     $newRoomId = (int)($_POST['room_id'] ?? 0);
-    $cand = $cid ? one('SELECT id FROM candidates WHERE id=? AND intake_id=?', [$cid, $intake['id']]) : null;
+    $cand = $cid ? one('SELECT id FROM candidates WHERE id=? AND intake_id=? AND is_international=0', [$cid, $intake['id']]) : null;
     $room = $newRoomId ? one('SELECT id, name, capacity FROM rooms WHERE id=? AND intake_id=?', [$newRoomId, $intake['id']]) : null;
     if (!$cand || !$room) {
         flash_set('Invalid candidate or room.', 'error');
@@ -54,59 +224,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['move_assignment'])) {
     redirect('/phdportal/admin/rooms.php');
 }
 
-// Auto-assign candidates to rooms
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_assign'])) {
-    check_csrf();
-    q('DELETE FROM room_assignments WHERE candidate_id IN (SELECT id FROM candidates WHERE intake_id=?)', [$intake['id']]);
-    $rooms = all('SELECT * FROM rooms WHERE intake_id=? ORDER BY is_pwd_scribe DESC, id', [$intake['id']]);
-    $pwdRooms = array_values(array_filter($rooms, fn($r)=>$r['is_pwd_scribe']));
-    $genRooms = array_values(array_filter($rooms, fn($r)=>!$r['is_pwd_scribe']));
-    // PWD candidates -> PWD scribe rooms first
-    $cands = all("SELECT id, disabled FROM candidates WHERE intake_id=? AND screening_status='Yes' ORDER BY serial_no, id", [$intake['id']]);
-    $pwdList = array_filter($cands, fn($c)=>in_array(strtoupper(trim($c['disabled']??'')), ['YES','Y','1']));
-    $genList = array_filter($cands, fn($c)=>!in_array(strtoupper(trim($c['disabled']??'')), ['YES','Y','1']));
-    $fill = function($candList, $rooms) {
-        $ri = 0; $seat = 1; $assigned = 0;
-        foreach ($candList as $c) {
-            if (!$rooms) break;
-            while ($ri < count($rooms)) {
-                $r = $rooms[$ri];
-                $used = (int)one('SELECT COUNT(*) c FROM room_assignments WHERE room_id=?', [$r['id']])['c'];
-                if ($used >= $r['capacity']) { $ri++; $seat = 1; continue; }
-                q('INSERT INTO room_assignments(candidate_id,room_id,seat_no) VALUES(?,?,?)',
-                  [$c['id'], $r['id'], (string)($used+1)]);
-                $assigned++;
-                break;
-            }
-        }
-        return $assigned;
-    };
-    $a1 = $pwdRooms ? $fill($pwdList, $pwdRooms) : 0;
-    // Unassigned PWD -> general rooms
-    $a2 = $fill(array_slice($pwdList, $a1), $genRooms);
-    $a3 = $fill($genList, $genRooms);
-    $total = $a1 + $a2 + $a3;
-    flash_set("Auto-assigned $total shortlisted candidates to rooms.", 'success');
-    redirect('/phdportal/admin/rooms.php');
-}
-
 $rooms = all('SELECT r.*,
-              (SELECT COUNT(*) FROM room_assignments a WHERE a.room_id=r.id) assigned_count
+              (SELECT COUNT(*) FROM room_assignments a
+                 JOIN candidates c ON c.id=a.candidate_id
+                 WHERE a.room_id=r.id AND c.is_international=0) assigned_count
               FROM rooms r WHERE r.intake_id=? ORDER BY r.is_pwd_scribe DESC, r.id', [$intake['id']]);
 $totalCap = array_sum(array_column($rooms, 'capacity'));
 $totalAssigned = array_sum(array_column($rooms, 'assigned_count'));
 
-$assignments = all("SELECT a.seat_no, c.id cand_id, c.dept_reg_no, c.name, c.birth_category, c.disabled, r.name room_name, r.id room_id, r.is_pwd_scribe
+$assignments = all("SELECT a.seat_no, c.id cand_id, c.dept_reg_no, c.name, c.birth_category, c.disabled, c.requires_scribe, r.name room_name, r.id room_id, r.is_pwd_scribe
                     FROM room_assignments a
                     JOIN candidates c ON c.id=a.candidate_id
                     JOIN rooms r ON r.id=a.room_id
-                    WHERE c.intake_id=?
+                    WHERE c.intake_id=? AND c.is_international=0
                     ORDER BY r.id, CAST(a.seat_no AS UNSIGNED)", [$intake['id']]);
 
-$shortlistCount = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND screening_status='Yes'", [$intake['id']])['c'];
+$shortlistCount = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status='Yes'", [$intake['id']])['c'];
+
+$unassigned = all("SELECT c.id, c.dept_reg_no, c.name, c.birth_category, c.disabled, c.requires_scribe
+                   FROM candidates c
+                   LEFT JOIN room_assignments a ON a.candidate_id=c.id
+                   WHERE c.intake_id=? AND c.is_international=0 AND c.screening_status='Yes' AND a.candidate_id IS NULL
+                   ORDER BY c.dept_reg_no, c.id", [$intake['id']]);
+
+$scribeCandCount = (int)one("SELECT COUNT(*) c FROM candidates
+                              WHERE intake_id=? AND is_international=0 AND screening_status='Yes' AND requires_scribe=1",
+                              [$intake['id']])['c'];
+$pwdRoomCount = count(array_filter($rooms, fn($r) => (int)$r['is_pwd_scribe'] === 1));
+$scribeShortfall = max(0, $scribeCandCount - $pwdRoomCount);
 
 render_header('Room Allocation', $u);
 ?>
+<?php if ($scribeShortfall > 0): ?>
+<div class="mb-4 bg-amber-50 border-l-4 border-amber-500 text-amber-900 p-3 rounded">
+  <div class="font-semibold">⚠ Not enough PWD rooms for scribe candidates</div>
+  <div class="text-sm mt-1">
+    <?= $scribeCandCount ?> candidate(s) require a scribe but only <?= $pwdRoomCount ?> PWD/Scribe room(s) exist.
+    Each scribe candidate needs a dedicated room — add at least <?= $scribeShortfall ?> more PWD/Scribe room(s),
+    or <?= $scribeShortfall ?> scribe candidate(s) will be left unassigned.
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
   <div>
     <h1 class="text-2xl font-semibold">Room Allocation — Written Exam</h1>
@@ -135,13 +294,45 @@ render_header('Room Allocation', $u);
   </div>
   <div class="card">
     <h3 class="font-semibold mb-2">Auto-Assign Seats</h3>
-    <p class="text-xs text-slate-600 mb-3">Assigns shortlisted candidates to rooms in order. PWD candidates get priority for PWD/scribe rooms.</p>
-    <form method="post" onsubmit="return confirm('Re-assign all candidates to rooms? Existing assignments will be cleared.');">
-      <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-      <button name="auto_assign" class="btn btn-primary w-full justify-center">Run Auto-Assign</button>
-    </form>
+    <p class="text-xs text-slate-600 mb-3">Each scribe-required candidate gets a whole PWD room to themselves (smallest-capacity rooms reserved first). All other candidates — including non-scribe PWD — fill general rooms in ascending dept-reg order.</p>
+
+    <div id="autoProgressBox" class="mb-3 hidden">
+      <div class="flex justify-between text-xs text-slate-600 mb-1">
+        <span id="autoProgressLabel">Preparing…</span>
+        <span id="autoProgressCount">0 / 0</span>
+      </div>
+      <div class="bg-slate-200 rounded-full h-3 overflow-hidden">
+        <div id="autoProgressBar" class="auto-prog-bar h-3 transition-all duration-300" style="width:0%"></div>
+      </div>
+    </div>
+
+    <div class="flex gap-2">
+      <button id="autoAssignBtn" type="button" class="btn btn-primary flex-1 justify-center">Run Auto-Assign</button>
+      <form method="post" class="inline" onsubmit="return confirm('Unassign ALL candidates from rooms? This cannot be undone.');">
+        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+        <input type="hidden" name="reset_assignments" value="1">
+        <button class="btn btn-danger" title="Clear all room assignments">Reset</button>
+      </form>
+    </div>
   </div>
 </div>
+
+<style>
+  .row-pwd { background-color: #fff1f2; }
+  .row-pwd:hover { background-color: #ffe4e6; }
+  .row-scribe { background-color: #fef3c7; }
+  .row-scribe:hover { background-color: #fde68a; }
+  @keyframes prog-stripes { from { background-position: 0 0; } to { background-position: 32px 0; } }
+  .auto-prog-bar {
+    background-image: linear-gradient(45deg,
+      rgba(255,255,255,.25) 25%, transparent 25%,
+      transparent 50%, rgba(255,255,255,.25) 50%,
+      rgba(255,255,255,.25) 75%, transparent 75%, transparent);
+    background-size: 32px 32px;
+    background-color: #4f46e5;
+    animation: prog-stripes 1s linear infinite;
+  }
+</style>
 
 <div class="card p-0 overflow-x-auto mb-5">
 <table class="data-table w-full">
@@ -172,6 +363,84 @@ render_header('Room Allocation', $u);
 </div>
 
 <?php
+$unassignedPwd = array_values(array_filter($unassigned, fn($c) => $isPwdCand($c)));
+$unassignedGen = array_values(array_filter($unassigned, fn($c) => !$isPwdCand($c)));
+
+$renderUnassignedRow = function($c) use ($isPwdCand) {
+    $pwd = $isPwdCand($c);
+    $scribe = (int)$c['requires_scribe'] === 1;
+    $cls = $scribe ? 'row-scribe' : ($pwd ? 'row-pwd' : '');
+    ?>
+    <tr class="<?= $cls ?>" data-cand-id="<?= (int)$c['id'] ?>" data-pwd="<?= $pwd ? 1 : 0 ?>">
+      <td class="font-mono text-xs"><?= h($c['dept_reg_no']) ?></td>
+      <td><?= h($c['name']) ?></td>
+      <td><?= category_badge($c['birth_category'] ?? '') ?></td>
+      <td class="text-xs"><?= h($c['disabled']) ?></td>
+      <td>
+        <?php if ($pwd): ?>
+          <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
+            <input type="checkbox" class="scribe-toggle" data-cand-id="<?= (int)$c['id'] ?>" <?= $scribe ? 'checked' : '' ?>>
+            <span class="scribe-status"><?= $scribe ? 'Yes' : 'No' ?></span>
+          </label>
+        <?php else: ?>
+          <span class="text-xs text-slate-400">—</span>
+        <?php endif; ?>
+      </td>
+      <td>
+        <button type="button" class="btn btn-secondary text-xs py-1 px-2 move-btn"
+                data-cand-id="<?= (int)$c['id'] ?>"
+                data-cand-name="<?= h($c['name']) ?>"
+                data-cand-reg="<?= h($c['dept_reg_no']) ?>"
+                data-current-room="(unassigned)"
+                data-current-room-id="0">Assign</button>
+      </td>
+    </tr>
+    <?php
+};
+?>
+
+<?php if ($unassignedPwd): ?>
+<div class="card mb-5 border-l-4 border-rose-500">
+  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+    <h3 class="font-semibold text-rose-800">
+      Unassigned PWD Candidates
+      <span class="text-sm text-slate-500 font-normal ml-2"><?= count($unassignedPwd) ?> pending</span>
+    </h3>
+    <div class="text-xs text-slate-500">
+      <span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:#fef3c7;border:1px solid #fcd34d"></span> Requires Scribe
+    </div>
+  </div>
+  <div class="overflow-x-auto">
+  <table class="data-table w-full">
+    <thead><tr><th>Dept Reg No</th><th>Name</th><th>Category</th><th>PWD</th><th>Requires Scribe</th><th>Assign To</th></tr></thead>
+    <tbody>
+    <?php foreach ($unassignedPwd as $c) $renderUnassignedRow($c); ?>
+    </tbody>
+  </table>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php if ($unassignedGen): ?>
+<div class="card mb-5">
+  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+    <h3 class="font-semibold">
+      Unassigned Shortlisted Candidates
+      <span class="text-sm text-slate-500 font-normal ml-2"><?= count($unassignedGen) ?> pending</span>
+    </h3>
+  </div>
+  <div class="overflow-x-auto">
+  <table class="data-table w-full">
+    <thead><tr><th>Dept Reg No</th><th>Name</th><th>Category</th><th>PWD</th><th>Requires Scribe</th><th>Assign To</th></tr></thead>
+    <tbody>
+    <?php foreach ($unassignedGen as $c) $renderUnassignedRow($c); ?>
+    </tbody>
+  </table>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php
 // Group assignments by room
 $byRoom = [];
 foreach ($assignments as $a) $byRoom[$a['room_id']][] = $a;
@@ -187,15 +456,29 @@ foreach ($assignments as $a) $byRoom[$a['room_id']][] = $a;
   </div>
   <?php if ($list): ?>
   <table class="data-table w-full">
-    <thead><tr><th>Sr. No.</th><th>Dept Reg No</th><th>Name</th><th>Category</th><th>PWD</th><th>Move To</th></tr></thead>
+    <thead><tr><th>Sr. No.</th><th>Dept Reg No</th><th>Name</th><th>Category</th><th>PWD</th><th>Scribe</th><th>Move To</th></tr></thead>
     <tbody>
-    <?php foreach ($list as $a): ?>
-      <tr>
+    <?php foreach ($list as $a):
+      $pwd = $isPwdCand($a);
+      $scribe = (int)$a['requires_scribe'] === 1;
+      $cls = $scribe ? 'row-scribe' : ($pwd ? 'row-pwd' : '');
+    ?>
+      <tr class="<?= $cls ?>" data-pwd="<?= $pwd ? 1 : 0 ?>">
         <td class="text-center font-semibold text-indigo-700"><?= h($a['seat_no']) ?></td>
         <td class="font-mono text-xs"><?= h($a['dept_reg_no']) ?></td>
         <td><?= h($a['name']) ?></td>
         <td><?= category_badge($a['birth_category'] ?? '') ?></td>
         <td class="text-xs"><?= h($a['disabled']) ?></td>
+        <td>
+          <?php if ($pwd): ?>
+            <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
+              <input type="checkbox" class="scribe-toggle" data-cand-id="<?= (int)$a['cand_id'] ?>" <?= $scribe ? 'checked' : '' ?>>
+              <span class="scribe-status"><?= $scribe ? 'Yes' : 'No' ?></span>
+            </label>
+          <?php else: ?>
+            <span class="text-xs text-slate-400">—</span>
+          <?php endif; ?>
+        </td>
         <td>
           <button type="button" class="btn btn-secondary text-xs py-1 px-2 move-btn"
                   data-cand-id="<?= (int)$a['cand_id'] ?>"
@@ -217,6 +500,8 @@ const ASSIGNMENTS = <?= json_encode($assignments) ?>;
 const INTAKE_NAME = <?= json_encode($intake['name']) ?>;
 const ENTRANCE_MODE = <?= json_encode($intake['entrance_mode'] ?: 'Written') ?>;
 const ENTRANCE_DATETIME = <?= json_encode($intake['entrance_datetime']) ?>;
+const SCRIBE_CAND_COUNT = <?= (int)$scribeCandCount ?>;
+const PWD_ROOM_COUNT = <?= (int)$pwdRoomCount ?>;
 
 function formatExamDate(dt) {
   if (!dt) return '';
@@ -319,6 +604,107 @@ $('.move-btn').on('click', function(){
 });
 $('#moveBackdrop').on('click', function(e){ if (e.target === this) $(this).addClass('hidden'); });
 $(document).on('keydown', e => { if (e.key === 'Escape') $('#moveBackdrop').addClass('hidden'); });
+
+// ---------- Requires Scribe toggle (AJAX) ----------
+$('.scribe-toggle').on('change', function(){
+  const $cb = $(this);
+  const candId = $cb.data('cand-id');
+  const value = $cb.is(':checked') ? 1 : 0;
+  const $row = $cb.closest('tr');
+  const $status = $cb.siblings('.scribe-status');
+  $cb.prop('disabled', true);
+  $.post('', { ajax: 'toggle_scribe', csrf: window.CSRF_TOKEN, candidate_id: candId, value: value })
+    .done(function(res){
+      if (res && res.ok) {
+        $status.text(value ? 'Yes' : 'No');
+        $row.removeClass('row-scribe row-pwd');
+        if (value) $row.addClass('row-scribe');
+        else if (parseInt($row.data('pwd'), 10) === 1) $row.addClass('row-pwd');
+      } else {
+        $cb.prop('checked', !value);
+        alert((res && res.error) || 'Failed to update');
+      }
+    })
+    .fail(function(){
+      $cb.prop('checked', !value);
+      alert('Network error updating scribe flag');
+    })
+    .always(function(){ $cb.prop('disabled', false); });
+});
+
+// ---------- Auto-Assign (chunked AJAX with progress bar) ----------
+const CHUNK_SIZE = 25;
+$('#autoAssignBtn').on('click', async function(){
+  if (SCRIBE_CAND_COUNT > PWD_ROOM_COUNT) {
+    const short = SCRIBE_CAND_COUNT - PWD_ROOM_COUNT;
+    if (!confirm(
+      '⚠ Not enough PWD rooms for scribe candidates.\n\n' +
+      SCRIBE_CAND_COUNT + ' candidate(s) require a scribe but only ' + PWD_ROOM_COUNT + ' PWD room(s) exist.\n' +
+      'Each scribe candidate needs a dedicated room — ' + short + ' will be left unassigned.\n\n' +
+      'Continue auto-assignment anyway?'
+    )) return;
+  }
+  if (!confirm('Re-assign all shortlisted candidates to rooms?\nExisting assignments will be cleared.')) return;
+  const $btn = $(this);
+  $btn.prop('disabled', true);
+  $('#autoProgressBox').removeClass('hidden');
+  $('#autoProgressLabel').text('Clearing existing assignments…');
+  $('#autoProgressCount').text('0 / 0');
+  $('#autoProgressBar').css('width', '0%');
+
+  let prep;
+  try {
+    prep = await $.post('', { ajax: 'prepare_auto', csrf: window.CSRF_TOKEN });
+  } catch (e) {
+    $('#autoProgressLabel').text('Failed to prepare auto-assign.');
+    $btn.prop('disabled', false);
+    return;
+  }
+
+  const plan = prep.plan || [];
+  const total = plan.length;
+  if (!total) {
+    $('#autoProgressLabel').text('Nothing to assign.');
+    $('#autoProgressBar').css('width', '100%');
+    setTimeout(() => location.reload(), 800);
+    return;
+  }
+
+  if (prep.scribe_count) {
+    const placed = (prep.scribe_rooms || []).length;
+    let msg = 'Reserved ' + placed + ' room(s) for scribe candidate(s)';
+    if (prep.unplaced_scribe) msg += ' (' + prep.unplaced_scribe + ' could not be placed — no PWD room left)';
+    $('#autoProgressLabel').text(msg);
+  }
+
+  let done = 0;
+  for (let i = 0; i < plan.length; i += CHUNK_SIZE) {
+    const chunk = plan.slice(i, i + CHUNK_SIZE);
+    try {
+      await $.post('', {
+        ajax: 'assign_chunk',
+        csrf: window.CSRF_TOKEN,
+        rows: JSON.stringify(chunk.map(p => ({
+          candidate_id: p.candidate_id, room_id: p.room_id, seat_no: p.seat_no
+        })))
+      });
+    } catch (e) {
+      $('#autoProgressLabel').text('Chunk failed at row ' + (i+1));
+      $btn.prop('disabled', false);
+      return;
+    }
+    done += chunk.length;
+    const pct = Math.round((done / total) * 100);
+    $('#autoProgressBar').css('width', pct + '%');
+    $('#autoProgressCount').text(done + ' / ' + total);
+    const last = chunk[chunk.length - 1];
+    $('#autoProgressLabel').text('Assigning… ' + last.cand_label + ' → ' + last.room_name);
+  }
+
+  const unplaced = prep.unplaced || 0;
+  $('#autoProgressLabel').text('Done — ' + total + ' assigned' + (unplaced ? ', ' + unplaced + ' unplaced (no capacity)' : '') + '.');
+  setTimeout(() => location.reload(), 900);
+});
 </script>
 
 <div id="moveBackdrop" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">

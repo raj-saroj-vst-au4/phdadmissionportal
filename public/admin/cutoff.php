@@ -38,20 +38,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['freeze_cutoff'])) {
     if (!$intake) { flash_set('No active intake.', 'error'); redirect('/phdportal/admin/cutoff.php'); }
     $cutoff = (float)($_POST['cutoff_gn'] ?? 0);
     q('UPDATE intakes SET cutoff_marks = ? WHERE id = ?', [$cutoff, $intake['id']]);
+    // Precedence mirrors effectiveCat(): disabled → ews → birth_category. EWS/PWD also handled
+    // when stored directly as birth_category (legacy data) so those rows aren't silently dropped.
     q('UPDATE candidates SET passed_cutoff = CASE
-        WHEN written_marks IS NULL THEN 0
+        WHEN written_marks IS NULL OR screening_status <> "Yes" THEN 0
         WHEN disabled = "Y" AND written_marks >= ? * 0.6667 THEN 1
-        WHEN birth_category IN ("SC","ST") AND written_marks >= ? * 0.6667 THEN 1
         WHEN ews = "Y" AND written_marks >= ? THEN 1
+        WHEN birth_category = "PWD" AND written_marks >= ? * 0.6667 THEN 1
+        WHEN birth_category = "EWS" AND written_marks >= ? THEN 1
+        WHEN birth_category IN ("SC","ST") AND written_marks >= ? * 0.6667 THEN 1
         WHEN birth_category = "GN" AND written_marks >= ? THEN 1
         WHEN birth_category = "OBC-NC" AND written_marks >= ? * 0.9 THEN 1
-        ELSE 0 END WHERE intake_id = ?',
-        [$cutoff, $cutoff, $cutoff, $cutoff, $cutoff, $intake['id']]);
+        ELSE 0 END WHERE intake_id = ? AND is_international=0',
+        [$cutoff, $cutoff, $cutoff, $cutoff, $cutoff, $cutoff, $cutoff, $intake['id']]);
     flash_set("Cutoff set to $cutoff (GN/EWS 100%, OBC-NC 90%, SC/ST/PWD 66.67%).", 'success');
     redirect('/phdportal/admin/cutoff.php');
 }
 
 $cutoff = (float)($intake['cutoff_marks'] ?? 0);
+
+// Refresh passed_cutoff against the current saved cutoff and current candidate state — marks
+// autosave / Excel import / new candidates don't update this flag, so it goes stale otherwise.
+// Skipped when frozen so a frozen snapshot stays untouched.
+if ($intake && $cutoff > 0 && !$cutoffFrozen) {
+    q('UPDATE candidates SET passed_cutoff = CASE
+        WHEN written_marks IS NULL OR screening_status <> "Yes" THEN 0
+        WHEN disabled = "Y" AND written_marks >= ? * 0.6667 THEN 1
+        WHEN ews = "Y" AND written_marks >= ? THEN 1
+        WHEN birth_category = "PWD" AND written_marks >= ? * 0.6667 THEN 1
+        WHEN birth_category = "EWS" AND written_marks >= ? THEN 1
+        WHEN birth_category IN ("SC","ST") AND written_marks >= ? * 0.6667 THEN 1
+        WHEN birth_category = "GN" AND written_marks >= ? THEN 1
+        WHEN birth_category = "OBC-NC" AND written_marks >= ? * 0.9 THEN 1
+        ELSE 0 END WHERE intake_id = ? AND is_international=0',
+        [$cutoff, $cutoff, $cutoff, $cutoff, $cutoff, $cutoff, $cutoff, $intake['id']]);
+}
 
 // Resolve each candidate to an "effective" birth category:
 // disabled='Y' -> PWD (overrides), else ews='Y' -> EWS (overrides), else birth_category.
@@ -61,45 +82,52 @@ $effectiveCat = function(array $row): ?string {
     return $row['birth_category'] ?? null;
 };
 
-// Build stats (across candidates with written marks entered)
+// Build stats (across candidates with written marks entered).
+// All charts/lists below derive from the same in-memory pass so they stay consistent with catStats —
+// the DB `passed_cutoff` flag is only refreshed on form submit, so it goes stale whenever marks are
+// autosaved, Excel-imported, or candidates are added after the last "Visualize and Save".
 $catStats = array_fill_keys(BIRTH_CATEGORIES, ['total' => 0, 'above' => 0]);
 $genderStats = []; $researchStats = [];
 $marksByCat = array_fill_keys(BIRTH_CATEGORIES, []);
+$shortlisted = [];
 if ($intake) {
-    $all = all("SELECT birth_category, ews, disabled, written_marks FROM candidates WHERE intake_id=? AND screening_status='Yes'", [$intake['id']]);
+    $all = all("SELECT id, serial_no, dept_reg_no, name, gender, birth_category, ews, disabled,
+                       written_marks, research_interest_selected
+                FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status='Yes'
+                ORDER BY serial_no, id", [$intake['id']]);
+    $genderLabelMap = ['M' => 'Male', 'F' => 'Female'];
+    $researchTally = [];
     foreach ($all as $row) {
         $ec = $effectiveCat($row);
         if (!isset($catStats[$ec])) continue;
         $catStats[$ec]['total']++;
-        if ($row['written_marks'] !== null) {
-            $eff = $cutoff * (CUTOFF_MULTIPLIERS[$ec] ?? 1.0);
-            if ((float)$row['written_marks'] >= $eff) $catStats[$ec]['above']++;
-            $marksByCat[$ec][] = (float)$row['written_marks'];
-        }
-    }
-    $gr = all("SELECT gender, COUNT(*) c FROM candidates WHERE intake_id=? AND passed_cutoff=1 GROUP BY gender", [$intake['id']]);
-    $genderLabelMap = ['M' => 'Male', 'F' => 'Female'];
-    foreach ($gr as $row) {
-        $label = $genderLabelMap[$row['gender']] ?? ($row['gender'] ?: 'Unknown');
-        $genderStats[$label] = ($genderStats[$label] ?? 0) + (int)$row['c'];
-    }
+        if ($row['written_marks'] === null) continue;
+        $marks = (float)$row['written_marks'];
+        $marksByCat[$ec][] = $marks;
+        $eff = $cutoff * (CUTOFF_MULTIPLIERS[$ec] ?? 1.0);
+        if ($marks < $eff) continue;
+        $catStats[$ec]['above']++;
 
-    $rows = all("SELECT TRIM(research_interest_selected) area, COUNT(*) c
-        FROM candidates WHERE intake_id=? AND passed_cutoff=1 AND research_interest_selected IS NOT NULL AND research_interest_selected <> ''
-        GROUP BY TRIM(research_interest_selected) ORDER BY c DESC LIMIT 12", [$intake['id']]);
-    foreach ($rows as $rr) $researchStats[$rr['area']] = (int)$rr['c'];
-}
+        $gLabel = $genderLabelMap[$row['gender']] ?? ($row['gender'] ?: 'Unknown');
+        $genderStats[$gLabel] = ($genderStats[$gLabel] ?? 0) + 1;
 
-// Shortlisted candidates (cutoff frozen view — used for list + PDF).
-$shortlisted = [];
-if ($intake && $cutoffFrozen) {
-    $shortlisted = all(
-        'SELECT serial_no, dept_reg_no, name, gender, birth_category, ews, disabled, written_marks
-         FROM candidates WHERE intake_id=? AND passed_cutoff=1
-         ORDER BY serial_no, id', [$intake['id']]
-    );
-    foreach ($shortlisted as &$row) $row['effective_category'] = $effectiveCat($row);
-    unset($row);
+        $area = trim((string)($row['research_interest_selected'] ?? ''));
+        if ($area !== '') $researchTally[$area] = ($researchTally[$area] ?? 0) + 1;
+
+        $shortlisted[] = [
+            'serial_no' => $row['serial_no'],
+            'dept_reg_no' => $row['dept_reg_no'],
+            'name' => $row['name'],
+            'gender' => $row['gender'],
+            'birth_category' => $row['birth_category'],
+            'ews' => $row['ews'],
+            'disabled' => $row['disabled'],
+            'written_marks' => $row['written_marks'],
+            'effective_category' => $ec,
+        ];
+    }
+    arsort($researchTally);
+    $researchStats = array_slice($researchTally, 0, 12, true);
 }
 
 render_header('Cutoff & Analytics', $u);

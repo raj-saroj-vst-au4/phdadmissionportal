@@ -5,7 +5,7 @@ $u = require_panel();
 require __DIR__ . '/../../src/layout.php';
 
 $id = (int)($_GET['id'] ?? 0);
-$c = one('SELECT * FROM candidates WHERE id=? AND panel_code=?', [$id, $u['panel_code']]);
+$c = one('SELECT * FROM candidates WHERE id=? AND panel_code=? AND is_international=0', [$id, $u['panel_code']]);
 if (!$c) { http_response_code(404); echo 'Candidate not found in your panel.'; exit; }
 
 $existing = one('SELECT * FROM interview_marks WHERE candidate_id=? AND panel_user_id=?', [$c['id'], $u['id']]);
@@ -47,12 +47,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 render_header('Interview - ' . $c['dept_reg_no'], $u);
 ?>
+<?php $hasAppPdf = $c['application_pdf'] && is_file(UPLOAD_APP_DIR . '/' . $c['application_pdf']); ?>
 <div class="flex items-center justify-between mb-4">
   <div>
     <h1 class="text-2xl font-semibold"><?= h($c['name']) ?></h1>
     <p class="text-sm text-slate-500 font-mono"><?= h($c['dept_reg_no']) ?></p>
   </div>
-  <a href="/phdportal/panel/dashboard.php" class="btn btn-secondary">&larr; Back to panel</a>
+  <div class="flex items-center gap-2">
+    <?php if ($hasAppPdf): ?>
+      <button type="button" class="btn btn-secondary view-pdf inline-flex items-center gap-1"
+              data-pdf-url="/phdportal/uploads/applications/<?= h($c['application_pdf']) ?>"
+              data-pdf-title="<?= h($c['dept_reg_no']) ?>">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        View Application PDF
+      </button>
+    <?php endif; ?>
+    <a href="/phdportal/panel/dashboard.php" class="btn btn-secondary">&larr; Back to panel</a>
+  </div>
 </div>
 
 <?php if (!empty($existing)): ?>
@@ -80,7 +91,7 @@ render_header('Interview - ' . $c['dept_reg_no'], $u);
     <h3 class="font-semibold mb-3">Candidate Profile</h3>
     <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
       <dt class="text-slate-500">Name</dt><dd><?= h($c['name']) ?></dd>
-      <dt class="text-slate-500">Categories Applied</dt><dd><?= h($c['categories_applied']) ?></dd>
+      <dt class="text-slate-500">Categories Applied</dt><dd><?= h(normalize_categories_applied($c['categories_applied'])) ?></dd>
       <dt class="text-slate-500">Qualifying Exam</dt><dd><?= h($c['qualifying_exam']) ?> (<?= h($c['passing_year']) ?>)</dd>
       <dt class="text-slate-500">Discipline</dt><dd><?= h($c['qualifying_discipline']) ?></dd>
       <dt class="text-slate-500">Percentage</dt><dd><?= h($c['percentage']) ?>%</dd>

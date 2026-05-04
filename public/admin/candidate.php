@@ -5,7 +5,7 @@ $u = require_admin();
 require __DIR__ . '/../../src/layout.php';
 
 $id = (int)($_GET['id'] ?? 0);
-$c = one('SELECT * FROM candidates WHERE id=?', [$id]);
+$c = one('SELECT * FROM candidates WHERE id=? AND is_international=0', [$id]);
 if (!$c) { http_response_code(404); echo 'Not found'; exit; }
 
 // Application PDF upload
@@ -31,8 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['upload_app'])) {
         $p = one('SELECT area FROM panels WHERE code=?', [$panelCode]);
         $panelArea = $p['panel_area'] ?? $p['area'] ?? null;
     }
-    $revised = trim((string)($_POST['revised_categories_applied'] ?? ''));
-    $revised = $revised === '' ? null : $revised;
+    $revised = normalize_categories_applied(trim((string)($_POST['revised_categories_applied'] ?? '')));
+    $revised = ($revised === '' || $revised === null) ? null : $revised;
     q('UPDATE candidates SET remark=?, screening_status=?, panel_code=?, panel_area=?, revised_categories_applied=? WHERE id=?',
         [$_POST['remark'] ?? null, $_POST['screening_status'] ?? 'Pending',
          $panelCode, $panelArea, $revised, $id]);
@@ -41,17 +41,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['upload_app'])) {
 }
 
 // Refresh candidate after any update
-$c = one('SELECT * FROM candidates WHERE id=?', [$id]);
+$c = one('SELECT * FROM candidates WHERE id=? AND is_international=0', [$id]);
 $panels = all('SELECT * FROM panels ORDER BY area');
 $marks = all('SELECT m.*, u.full_name panel_name FROM interview_marks m JOIN users u ON u.id=m.panel_user_id WHERE m.candidate_id=?', [$id]);
 
 // Previous / next candidate within the same intake (matches candidates.php ORDER BY serial_no, id)
 $prev = one('SELECT id FROM candidates
-             WHERE intake_id=? AND (IFNULL(serial_no,-1), id) < (IFNULL(?,-1), ?)
+             WHERE intake_id=? AND is_international=0 AND (IFNULL(serial_no,-1), id) < (IFNULL(?,-1), ?)
              ORDER BY serial_no DESC, id DESC LIMIT 1',
             [$c['intake_id'], $c['serial_no'], $c['id']]);
 $next = one('SELECT id FROM candidates
-             WHERE intake_id=? AND (IFNULL(serial_no,-1), id) > (IFNULL(?,-1), ?)
+             WHERE intake_id=? AND is_international=0 AND (IFNULL(serial_no,-1), id) > (IFNULL(?,-1), ?)
              ORDER BY serial_no, id LIMIT 1',
             [$c['intake_id'], $c['serial_no'], $c['id']]);
 
@@ -98,9 +98,10 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
       <dt class="text-slate-500">Disabled?</dt><dd><?= h($c['disabled']) ?></dd>
       <dt class="text-slate-500">CFTI?</dt><dd><?= h($c['cfti']) ?></dd>
       <dt class="text-slate-500">IIT BTech?</dt><dd><?= h($c['iit_btech']) ?></dd>
-      <dt class="text-slate-500">Categories Applied</dt><dd><?= h($c['categories_applied']) ?></dd>
+      <dt class="text-slate-500">Categories Applied</dt><dd><?= h(normalize_categories_applied($c['categories_applied'])) ?></dd>
       <dt class="text-slate-500">Revised Category</dt>
-      <dd><?= $c['revised_categories_applied'] ? '<span class="font-semibold text-indigo-700">'.h($c['revised_categories_applied']).'</span>' : '<span class="text-slate-400">—</span>' ?></dd>
+      <?php $revDisp = normalize_categories_applied($c['revised_categories_applied'] ?? null); ?>
+      <dd><?= $revDisp ? '<span class="font-semibold text-indigo-700">'.h($revDisp).'</span>' : '<span class="text-slate-400">—</span>' ?></dd>
       <dt class="text-slate-500">Email</dt><dd><?= h($c['email']) ?></dd>
       <dt class="text-slate-500">Qualifying Exam</dt><dd><?= h($c['qualifying_exam']) ?> &middot; <?= h($c['qualifying_discipline']) ?> (<?= h($c['passing_year']) ?>)</dd>
       <dt class="text-slate-500">Percentage / CPI</dt><dd><?= h($c['percentage']) ?>% &nbsp;<?= h($c['original_percentage']) ?> / <?= h($c['original_percentage_out_of']) ?> &nbsp;CPI: <?= h($c['cpi_grade']) ?></dd>
@@ -177,13 +178,16 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
     <!-- Revised Application Category -->
     <div class="card">
       <h3 class="font-semibold mb-2">Revised Application Category</h3>
-      <p class="text-xs text-slate-500 mb-1">Original: <span class="font-mono"><?= h($c['categories_applied'] ?: '—') ?></span></p>
+      <p class="text-xs text-slate-500 mb-1">Original: <span class="font-mono"><?= h(normalize_categories_applied($c['categories_applied']) ?: '—') ?></span></p>
       <label class="text-xs font-medium">Revised</label>
-      <?php $revOpts = ['TA','RA','SF','EX','CT','TAP','FA','SW','IS']; ?>
+      <?php
+        $revOpts = ['TA','SF','EX','CT','TAP','FA','SW','IS'];
+        $revCurrent = normalize_categories_applied($c['revised_categories_applied'] ?? null);
+      ?>
       <select name="revised_categories_applied">
         <option value="">—</option>
         <?php foreach ($revOpts as $ro): ?>
-          <option value="<?= h($ro) ?>"<?= $ro===$c['revised_categories_applied']?' selected':'' ?>><?= h($ro) ?></option>
+          <option value="<?= h($ro) ?>"<?= $ro===$revCurrent?' selected':'' ?>><?= h($ro) ?></option>
         <?php endforeach; ?>
       </select>
     </div>

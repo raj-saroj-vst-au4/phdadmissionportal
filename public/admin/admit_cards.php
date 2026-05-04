@@ -12,7 +12,7 @@ $cands = all("SELECT c.id, c.dept_reg_no, c.name, c.applicant_id, c.birth_catego
               FROM candidates c
               LEFT JOIN room_assignments a ON a.candidate_id=c.id
               LEFT JOIN rooms r ON r.id=a.room_id
-              WHERE c.intake_id=? AND c.screening_status='Yes'
+              WHERE c.intake_id=? AND c.is_international=0 AND c.screening_status='Yes'
               ORDER BY c.serial_no, c.id", [$intake['id']]);
 
 render_header('Admit Cards', $u);

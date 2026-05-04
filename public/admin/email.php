@@ -8,11 +8,11 @@ $intake = active_intake();
 if (!$intake) { flash_set('No active intake.', 'error'); redirect('/phdportal/dashboard.php'); }
 
 $phase = $_GET['phase'] ?? 'written';
-$isIntl = !empty($_GET['intl']) ? 1 : 0;
+$isIntl = 0;
 
 $presets = [
   'written' => [
-    'subject' => 'Written/CBT Exam Instructions — SJMSOM IITB PhD Admissions {{intake}}',
+    'subject' => 'Entrance Exam Instructions — SJMSOM IITB PhD Admissions {{intake}}aourva',
     'body' => "Dear {{name}},\n\nThis is to inform you that your application (Dept Reg No: {{dept_reg_no}}) has been shortlisted for the entrance examination as part of SJMSOM PhD Admissions for {{intake}}.\n\nPlease carry a printout of your admit card and a valid photo ID.\nReporting time: 1 hour before the exam start.\nYour RMG No. is {{dept_reg_no}} — quote it in all communications.\n\nIf a downloadable admit card is not attached, please note your RMG No, PW No and Name as printed in this communication.\n\nBest regards,\nSJMSOM Admissions Office\nIIT Bombay",
   ],
   'interview' => [
@@ -48,10 +48,6 @@ render_header('Email Communication', $u);
   <label class="flex items-center gap-2 cursor-pointer">
     <input type="radio" name="aud" value="0" <?= !$isIntl ? 'checked' : '' ?> onchange="location.href='?phase=<?= h($phase) ?>&intl=0'">
     <span>Indian Candidates</span>
-  </label>
-  <label class="flex items-center gap-2 cursor-pointer">
-    <input type="radio" name="aud" value="1" <?= $isIntl ? 'checked' : '' ?> onchange="location.href='?phase=<?= h($phase) ?>&intl=1'">
-    <span>International Candidates</span>
   </label>
 </div>
 

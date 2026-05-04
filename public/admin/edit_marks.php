@@ -11,11 +11,16 @@ $m = $mid ? one(
      FROM interview_marks m
      JOIN users u ON u.id = m.panel_user_id
      JOIN candidates c ON c.id = m.candidate_id
-     WHERE m.id = ?', [$mid]) : null;
+     WHERE m.id = ? AND c.is_international = 0', [$mid]) : null;
 if (!$m) { http_response_code(404); echo 'Marks row not found.'; exit; }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save'])) {
     check_csrf();
+    $fresh = one('SELECT password_hash FROM users WHERE id=?', [$u['id']]);
+    if (!$fresh || !password_verify($_POST['passcode'] ?? '', $fresh['password_hash'])) {
+        flash_set('Admin passcode is incorrect. Marks not saved.', 'error');
+        redirect('/phdportal/admin/edit_marks.php?id=' . $mid);
+    }
     $fk = max(0, min(25, (float)($_POST['functional_knowledge'] ?? 0)));
     $ra = max(0, min(25, (float)($_POST['research_aptitude'] ?? 0)));
     $rp = max(0, min(25, (float)($_POST['research_proposal_quality'] ?? 0)));
@@ -61,9 +66,10 @@ render_header('Edit Interview Marks - ' . $m['dept_reg_no'], $u);
 </div>
 
 <div class="card max-w-2xl">
-  <form method="post" id="editMarksForm">
+  <form method="post" id="editMarksForm" autocomplete="off">
     <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
     <input type="hidden" name="save" value="1">
+    <input type="hidden" name="passcode" id="saveMarksPasscode" value="">
     <div class="grid grid-cols-2 gap-4">
       <div>
         <label class="text-sm font-medium">Functional Knowledge <span class="text-xs text-slate-500">(max 25)</span></label>
@@ -111,10 +117,26 @@ render_header('Edit Interview Marks - ' . $m['dept_reg_no'], $u);
       </button>
       <div class="flex gap-2">
         <a href="/phdportal/admin/candidate.php?id=<?= (int)$m['cand_id'] ?>" class="btn btn-secondary">Cancel</a>
-        <button class="btn btn-primary">Save Changes</button>
+        <button type="button" class="btn btn-primary" onclick="$('#savePasscodeBackdrop').removeClass('hidden'); setTimeout(()=>$('#savePasscodeInput').focus(), 50);">Save Changes</button>
       </div>
     </div>
   </form>
+</div>
+
+<!-- Save modal (admin password required to commit edits) -->
+<div id="savePasscodeBackdrop" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+    <h3 class="text-lg font-semibold text-indigo-700 mb-2">Confirm Save</h3>
+    <p class="text-sm text-slate-700 mb-3">
+      Enter your admin password to save edits to this panelist's marks.
+    </p>
+    <label class="text-xs font-medium">Admin password:</label>
+    <input type="password" id="savePasscodeInput" autocomplete="new-password" class="mt-1" placeholder="Your login password">
+    <div class="flex justify-end gap-2 mt-4">
+      <button type="button" class="btn btn-secondary" onclick="$('#savePasscodeBackdrop').addClass('hidden')">Cancel</button>
+      <button type="button" id="savePasscodeConfirm" class="btn btn-primary">Confirm &amp; Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- Reset modal (delete this panelist's submission) -->
@@ -155,6 +177,22 @@ $('.mark-inp').on('input', function(){
 $(document).ready(recalcTotal);
 
 $('#resetBackdrop').on('click', function(e){ if (e.target === this) $(this).addClass('hidden'); });
-$(document).on('keydown', e => { if (e.key === 'Escape') $('#resetBackdrop').addClass('hidden'); });
+$(document).on('keydown', e => {
+  if (e.key === 'Escape') {
+    $('#resetBackdrop').addClass('hidden');
+    $('#savePasscodeBackdrop').addClass('hidden');
+  }
+});
+
+// Save Changes flow: collect admin password in modal, copy into the main form's hidden field, submit.
+function submitSaveWithPasscode() {
+  const pw = $('#savePasscodeInput').val();
+  if (!pw) { $('#savePasscodeInput').focus(); return; }
+  $('#saveMarksPasscode').val(pw);
+  $('#editMarksForm').trigger('submit');
+}
+$('#savePasscodeConfirm').on('click', submitSaveWithPasscode);
+$('#savePasscodeInput').on('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); submitSaveWithPasscode(); } });
+$('#savePasscodeBackdrop').on('click', function(e){ if (e.target === this) $(this).addClass('hidden'); });
 </script>
 <?php render_footer(); ?>

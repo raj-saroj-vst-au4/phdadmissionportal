@@ -12,21 +12,21 @@ $counts = [
     'selected' => 0, 'notsel' => 0, 'waitlisted' => 0,
 ];
 if ($intake) {
-    $r = one("SELECT COUNT(*) c FROM candidates WHERE intake_id = ?", [$intake['id']]);
+    $r = one("SELECT COUNT(*) c FROM candidates WHERE intake_id = ? AND is_international=0", [$intake['id']]);
     $counts['total'] = (int)$r['c'];
     foreach (['Yes','No','Doubtful','Pending'] as $s) {
-        $r = one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND screening_status=?", [$intake['id'],$s]);
+        $r = one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status=?", [$intake['id'],$s]);
         $k = strtolower($s);
         $counts[$k] = (int)$r['c'];
     }
     foreach ([['Selected','selected'],['Not Selected','notsel'],['Waitlisted','waitlisted']] as $pair) {
-        $r = one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND final_status=?", [$intake['id'],$pair[0]]);
+        $r = one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 AND final_status=?", [$intake['id'],$pair[0]]);
         $counts[$pair[1]] = (int)$r['c'];
     }
 }
 
-$catRows = $intake ? all("SELECT birth_category cat, COUNT(*) c FROM candidates WHERE intake_id=? GROUP BY birth_category", [$intake['id']]) : [];
-$genderRows = $intake ? all("SELECT gender g, COUNT(*) c FROM candidates WHERE intake_id=? GROUP BY gender", [$intake['id']]) : [];
+$catRows = $intake ? all("SELECT birth_category cat, COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 GROUP BY birth_category", [$intake['id']]) : [];
+$genderRows = $intake ? all("SELECT gender g, COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=0 GROUP BY gender", [$intake['id']]) : [];
 
 render_header('Dashboard', $u);
 ?>

@@ -5,8 +5,23 @@ Usage: extract_excel.py <path-to-xlsx>
 Outputs JSON array to stdout. Exits non-zero on failure.
 """
 import json
+import re
 import sys
 from openpyxl import load_workbook
+
+
+def normalize_categories_applied(s):
+    """RA and RA/TA collapse to TA; standalone RA tokens in lists become TA.
+    Mirrors normalize_categories_applied() in src/helpers.php — keep both in sync."""
+    if s is None:
+        return None
+    s = str(s).strip()
+    if not s:
+        return ""
+    compact = re.sub(r"\s+", "", s.upper())
+    if compact in ("RA", "RA/TA", "TA/RA"):
+        return "TA"
+    return re.sub(r"\bRA\b", "TA", s, flags=re.IGNORECASE)
 
 
 # Map of canonical field name -> list of header substrings (lowercased) that match
@@ -141,6 +156,8 @@ def main():
             rec[field] = cell_str(val)
         if not rec.get("dept_reg_no") or not rec.get("name"):
             continue
+        if "categories_applied" in rec:
+            rec["categories_applied"] = normalize_categories_applied(rec["categories_applied"])
         out.append(rec)
 
     json.dump(out, sys.stdout, ensure_ascii=False)

@@ -35,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['manual_assign'])) {
     $code = trim((string)($_POST['panel_code'] ?? ''));
     $p = $code ? one('SELECT code, area FROM panels WHERE code=?', [$code]) : null;
     if ($cid && $p && $intake) {
-        q('UPDATE candidates SET panel_code=?, panel_area=? WHERE id=? AND intake_id=? AND passed_cutoff=1',
+        q('UPDATE candidates SET panel_code=?, panel_area=? WHERE id=? AND intake_id=? AND is_international=0 AND passed_cutoff=1',
             [$p['code'], $p['area'], $cid, $intake['id']]);
         flash_set('Panel assigned.', 'success');
     } else {
@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_assignments']))
     if (!$cutoffFrozen) { flash_set('Freeze the cutoff before resetting panel assignments.', 'error'); redirect('/phdportal/admin/panels.php'); }
     if ($interviewFrozen) { flash_set('Interview marking is frozen.', 'error'); redirect('/phdportal/admin/panels.php'); }
     if ($intake) {
-        $stmt = q('UPDATE candidates SET panel_code=NULL, panel_area=NULL WHERE intake_id=? AND passed_cutoff=1',
+        $stmt = q('UPDATE candidates SET panel_code=NULL, panel_area=NULL WHERE intake_id=? AND is_international=0 AND passed_cutoff=1',
             [$intake['id']]);
         flash_set('Cleared panel assignments for ' . $stmt->rowCount() . ' shortlisted candidates.', 'success');
     }
@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_assign'])) {
     check_csrf();
     if (!$cutoffFrozen) { flash_set('Freeze the cutoff before allocating panels.', 'error'); redirect('/phdportal/admin/panels.php'); }
     $cands = all("SELECT id, research_interest_selected FROM candidates
-                  WHERE intake_id=? AND passed_cutoff=1", [$intake['id']]);
+                  WHERE intake_id=? AND is_international=0 AND passed_cutoff=1", [$intake['id']]);
 
     // Tokenize an area/interest string: lowercase, split on non-alphanumerics, drop stopwords
     // and generic words that appear across multiple panels ("management", "business").
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_assign'])) {
             elseif ($tie) { $ambiguous++; continue; }
         }
         if ($assigned) {
-            q('UPDATE candidates SET panel_code=?, panel_area=? WHERE id=?',
+            q('UPDATE candidates SET panel_code=?, panel_area=? WHERE id=? AND is_international=0',
                 [$assigned['code'], $assigned['area'], $c['id']]);
             $updated++;
         } else {
@@ -112,7 +112,7 @@ $byPanel = [];
 if ($intake && $cutoffFrozen) {
     $rows = all("SELECT c.*, p.area panel_full_area FROM candidates c
                  LEFT JOIN panels p ON p.code = c.panel_code
-                 WHERE c.intake_id=? AND c.passed_cutoff=1
+                 WHERE c.intake_id=? AND c.is_international=0 AND c.passed_cutoff=1
                  ORDER BY c.panel_code, c.dept_reg_no", [$intake['id']]);
     foreach ($rows as $r) {
         $byPanel[$r['panel_code'] ?: 'UNASSIGNED'][] = $r;

@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_upload'])) {
             $base = pathinfo($raw, PATHINFO_FILENAME);
             $dept = trim($base);
             // Verify candidate exists
-            $cand = one('SELECT id, dept_reg_no FROM candidates WHERE intake_id=? AND dept_reg_no=?', [$intake['id'], $dept]);
+            $cand = one('SELECT id, dept_reg_no FROM candidates WHERE intake_id=? AND dept_reg_no=? AND is_international=0', [$intake['id'], $dept]);
             if (!$cand) {
                 $skip++;
                 $errs[] = "No candidate for filename '$raw'";
@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_upload'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_app'])) {
     check_csrf();
     $cid = (int)$_POST['cand_id'];
-    $cand = one('SELECT * FROM candidates WHERE id=? AND intake_id=?', [$cid, $intake['id']]);
+    $cand = one('SELECT * FROM candidates WHERE id=? AND intake_id=? AND is_international=0', [$cid, $intake['id']]);
     if ($cand && $cand['application_pdf']) {
         $path = UPLOAD_APP_DIR . '/' . $cand['application_pdf'];
         if (is_file($path)) @unlink($path);
@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_app'])) {
     redirect('/phdportal/admin/applications.php');
 }
 
-$cands = all('SELECT id, serial_no, dept_reg_no, name, application_pdf, photo FROM candidates WHERE intake_id=? ORDER BY serial_no, id', [$intake['id']]);
+$cands = all('SELECT id, serial_no, dept_reg_no, name, application_pdf, photo FROM candidates WHERE intake_id=? AND is_international=0 ORDER BY serial_no, id', [$intake['id']]);
 $total = count($cands);
 $withPdf = count(array_filter($cands, fn($r)=>!empty($r['application_pdf'])));
 $withPhoto = count(array_filter($cands, fn($r)=>!empty($r['photo'])));

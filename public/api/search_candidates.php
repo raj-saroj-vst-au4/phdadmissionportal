@@ -7,7 +7,7 @@ if (!$intake) json_out([]);
 $q = trim($_GET['q'] ?? '');
 if ($q === '') json_out([]);
 $like = "%$q%";
-$where = 'intake_id=? AND (dept_reg_no LIKE ? OR name LIKE ? OR applicant_id LIKE ?)';
+$where = 'intake_id=? AND is_international=0 AND (dept_reg_no LIKE ? OR name LIKE ? OR applicant_id LIKE ?)';
 $params = [$intake['id'], $like, $like, $like];
 if ($u['role'] === 'panel') {
     $where .= ' AND panel_code = ?';
