@@ -92,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_FILES['excel']['name'])) {
                 (int)($r['serial_no'] ?? 0) ?: null,
                 $r['applicant_id'] ?? null,
                 $dept,
-                $r['name'] ?? '',
+                mb_strtoupper(trim($r['name'] ?? ''), 'UTF-8'),
                 $r['email'] ?? null,
                 normalize_gender($r['gender'] ?? null),
                 normalize_birth_category($r['birth_category'] ?? null),

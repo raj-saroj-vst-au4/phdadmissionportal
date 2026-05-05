@@ -24,11 +24,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $taSc  = $intToNull($_POST['ta_seats_sc']  ?? '');
         $taSt  = $intToNull($_POST['ta_seats_st']  ?? '');
         $taEws = $intToNull($_POST['ta_seats_ews'] ?? '');
+        $taPwd = $intToNull($_POST['ta_seats_pwd'] ?? '');
         try {
             q('INSERT INTO intakes(name,season,year,entrance_mode,entrance_datetime,interview_datetime,
-                                   ta_seats_gn,ta_seats_obc,ta_seats_sc,ta_seats_st,ta_seats_ews)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-              [$name,$season,$year,$mode,$entrance_dt,$interview_dt,$taGn,$taObc,$taSc,$taSt,$taEws]);
+                                   ta_seats_gn,ta_seats_obc,ta_seats_sc,ta_seats_st,ta_seats_ews,ta_seats_pwd)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+              [$name,$season,$year,$mode,$entrance_dt,$interview_dt,$taGn,$taObc,$taSc,$taSt,$taEws,$taPwd]);
             flash_set("Intake $name created", 'success');
         } catch (Throwable $e) {
             flash_set('Failed: ' . $e->getMessage(), 'error');
@@ -48,10 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $taSc  = $intToNull($_POST['ta_seats_sc']  ?? '');
         $taSt  = $intToNull($_POST['ta_seats_st']  ?? '');
         $taEws = $intToNull($_POST['ta_seats_ews'] ?? '');
+        $taPwd = $intToNull($_POST['ta_seats_pwd'] ?? '');
         q('UPDATE intakes SET entrance_mode=?, entrance_datetime=?, interview_datetime=?,
-                              ta_seats_gn=?, ta_seats_obc=?, ta_seats_sc=?, ta_seats_st=?, ta_seats_ews=?
+                              ta_seats_gn=?, ta_seats_obc=?, ta_seats_sc=?, ta_seats_st=?, ta_seats_ews=?, ta_seats_pwd=?
            WHERE id=?',
-          [$mode, $entrance_dt, $interview_dt, $taGn, $taObc, $taSc, $taSt, $taEws, $id]);
+          [$mode, $entrance_dt, $interview_dt, $taGn, $taObc, $taSc, $taSt, $taEws, $taPwd, $id]);
         flash_set('Intake schedule updated.', 'success');
     } elseif ($act === 'activate') {
         $id = (int)$_POST['id'];
@@ -177,13 +179,14 @@ render_header('Intakes', $u);
       </div>
       <div>
         <label class="text-sm font-medium block">Approved TA Seats (birth-category-wise) for this intake</label>
-        <p class="text-xs text-slate-500 mb-2">PWD candidates draw from their own birth-category bucket.</p>
-        <div class="grid grid-cols-5 gap-2">
+        <p class="text-xs text-slate-500 mb-2">PWD candidates draw from their own birth-category bucket; the PWD count is informational.</p>
+        <div class="grid grid-cols-3 gap-2">
           <div><label class="text-xs text-slate-500">GN</label><input type="number" min="0" name="ta_seats_gn" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">OBC-NC</label><input type="number" min="0" name="ta_seats_obc" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">SC</label><input type="number" min="0" name="ta_seats_sc" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">ST</label><input type="number" min="0" name="ta_seats_st" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">EWS</label><input type="number" min="0" name="ta_seats_ews" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">PWD</label><input type="number" min="0" name="ta_seats_pwd" placeholder="0"></div>
         </div>
       </div>
       <button class="btn btn-primary">Create</button>
@@ -219,6 +222,7 @@ render_header('Intakes', $u);
                 'sc'  => $i['ta_seats_sc'],
                 'st'  => $i['ta_seats_st'],
                 'ews' => $i['ta_seats_ews'],
+                'pwd' => $i['ta_seats_pwd'],
               ]) ?>)'>Edit Schedule</button>
             <?php if (!$i['is_active']): ?>
             <button type="button" class="btn btn-secondary text-xs"
@@ -267,13 +271,14 @@ render_header('Intakes', $u);
       </div>
       <div>
         <label class="text-sm font-medium block">Approved TA Seats (birth-category-wise)</label>
-        <p class="text-xs text-slate-500 mb-2">PWD candidates draw from their own birth-category bucket.</p>
-        <div class="grid grid-cols-5 gap-2">
+        <p class="text-xs text-slate-500 mb-2">PWD candidates draw from their own birth-category bucket; the PWD count is informational.</p>
+        <div class="grid grid-cols-3 gap-2">
           <div><label class="text-xs text-slate-500">GN</label><input type="number" min="0" name="ta_seats_gn" id="sTaGn" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">OBC-NC</label><input type="number" min="0" name="ta_seats_obc" id="sTaObc" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">SC</label><input type="number" min="0" name="ta_seats_sc" id="sTaSc" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">ST</label><input type="number" min="0" name="ta_seats_st" id="sTaSt" placeholder="0"></div>
           <div><label class="text-xs text-slate-500">EWS</label><input type="number" min="0" name="ta_seats_ews" id="sTaEws" placeholder="0"></div>
+          <div><label class="text-xs text-slate-500">PWD</label><input type="number" min="0" name="ta_seats_pwd" id="sTaPwd" placeholder="0"></div>
         </div>
       </div>
       <div class="flex justify-end gap-2 pt-2">
@@ -341,6 +346,7 @@ function openSchedule(id, name, mode, entrance, interview, seats) {
   $('#sTaSc').val(seats.sc ?? '');
   $('#sTaSt').val(seats.st ?? '');
   $('#sTaEws').val(seats.ews ?? '');
+  $('#sTaPwd').val(seats.pwd ?? '');
   $('#schedBackdrop').removeClass('hidden');
 }
 function closeSchedule() { $('#schedBackdrop').addClass('hidden'); }

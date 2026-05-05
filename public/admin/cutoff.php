@@ -159,6 +159,7 @@ render_header('Cutoff & Analytics', $u);
     <button type="button" class="btn btn-secondary text-xs" onclick="$('#unfreezeBackdrop').removeClass('hidden')">Unfreeze</button>
     <a href="/phdportal/admin/candidates.php?passed_cutoff=1" class="btn btn-secondary text-xs">View Shortlisted (<?= count($shortlisted) ?>)</a>
     <button type="button" class="btn btn-primary text-xs" onclick="downloadShortlistedPdf()">Download PDF</button>
+    <button type="button" class="btn btn-primary text-xs" onclick="downloadResultPdf()">Download Result</button>
   <?php endif; ?>
 </div>
 
@@ -291,6 +292,93 @@ function downloadShortlistedPdf() {
     headStyles: { fillColor: [79,70,229] }
   });
   doc.save('Shortlisted_' + (INTAKE_NAME || 'intake').replace(/\s+/g,'_') + '_<?= date('Ymd') ?>.pdf');
+}
+
+// "Download Result" — minimal PDF (S. No. + Dept Reg No only) with SJMSOM logo as a faded
+// watermark and stamp on every page, matching the admit card branding.
+const RESULT_LOGO_URL = '/phdportal/assets/img/SJMSOM_logo.png';
+const RESULT_STAMP_URL = '/phdportal/assets/img/sjmsom_Stamp.png';
+let RESULT_ASSETS = null;
+function _loadResultImage(src) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+function _resultBakeAlpha(img, alpha) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const ctx = c.getContext('2d');
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(img, 0, 0);
+  return { dataUrl: c.toDataURL('image/png'), w: img.naturalWidth, h: img.naturalHeight };
+}
+function _resultToDataUrl(img) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return { dataUrl: c.toDataURL('image/png'), w: img.naturalWidth, h: img.naturalHeight };
+}
+function _ensureResultAssets() {
+  if (RESULT_ASSETS) return RESULT_ASSETS;
+  RESULT_ASSETS = Promise.all([_loadResultImage(RESULT_LOGO_URL), _loadResultImage(RESULT_STAMP_URL)])
+    .then(([logo, stamp]) => ({
+      logo: logo ? _resultBakeAlpha(logo, 0.15) : null,
+      stamp: stamp ? _resultToDataUrl(stamp) : null,
+    }));
+  return RESULT_ASSETS;
+}
+
+async function downloadResultPdf() {
+  const { logo, stamp } = await _ensureResultAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const generatedAt = new Date().toLocaleString();
+
+  const drawBackground = () => {
+    if (!logo) return;
+    const maxW = pageW * 0.6, maxH = pageH * 0.6;
+    const ratio = logo.w / logo.h;
+    let w = maxW, h = maxW / ratio;
+    if (h > maxH) { h = maxH; w = maxH * ratio; }
+    doc.addImage(logo.dataUrl, 'PNG', (pageW - w) / 2, (pageH - h) / 2, w, h);
+  };
+  const drawForeground = () => {
+    doc.setFontSize(14); doc.setFont(undefined, 'bold'); doc.setTextColor(0, 0, 0);
+    doc.text('SJMSOM IIT Bombay — PhD Admissions Result', pageW / 2, 16, { align: 'center' });
+    doc.setFontSize(10); doc.setFont(undefined, 'normal');
+    doc.text('Intake: ' + INTAKE_NAME, pageW / 2, 23, { align: 'center' });
+    doc.text('Generated: ' + generatedAt, pageW / 2, 29, { align: 'center' });
+    if (stamp) {
+      const sBoxW = 45, sBoxH = 22;
+      const ratio = stamp.w / stamp.h;
+      let w = sBoxW, h = sBoxW / ratio;
+      if (h > sBoxH) { h = sBoxH; w = sBoxH * ratio; }
+      doc.addImage(stamp.dataUrl, 'PNG', pageW - w - 14, pageH - h - 14, w, h);
+    }
+  };
+
+  const body = SHORTLISTED.map((r, i) => [
+    r.serial_no ?? (i + 1),
+    r.dept_reg_no ?? '',
+  ]);
+
+  doc.autoTable({
+    startY: 36,
+    head: [['S. No.', 'Dept Reg No']],
+    body,
+    styles: { fontSize: 10, cellPadding: 3, halign: 'center' },
+    headStyles: { fillColor: [79, 70, 229], halign: 'center' },
+    margin: { top: 36, bottom: 40, left: 30, right: 30 },
+    willDrawPage: drawBackground,
+    didDrawPage: drawForeground,
+  });
+
+  doc.save('Result_' + (INTAKE_NAME || 'intake').replace(/\s+/g, '_') + '_<?= date('Ymd') ?>.pdf');
 }
 <?php endif; ?>
 </script>

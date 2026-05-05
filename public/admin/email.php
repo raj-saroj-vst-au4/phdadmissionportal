@@ -12,8 +12,8 @@ $isIntl = 0;
 
 $presets = [
   'written' => [
-    'subject' => 'Entrance Exam Instructions — SJMSOM IITB PhD Admissions {{intake}}aourva',
-    'body' => "Dear {{name}},\n\nThis is to inform you that your application (Dept Reg No: {{dept_reg_no}}) has been shortlisted for the entrance examination as part of SJMSOM PhD Admissions for {{intake}}.\n\nPlease carry a printout of your admit card and a valid photo ID.\nReporting time: 1 hour before the exam start.\nYour RMG No. is {{dept_reg_no}} — quote it in all communications.\n\nIf a downloadable admit card is not attached, please note your RMG No, PW No and Name as printed in this communication.\n\nBest regards,\nSJMSOM Admissions Office\nIIT Bombay",
+    'subject' => 'Entrance Exam Instructions — SJMSOM IITB PhD Admissions {{intake}}',
+    'body' => "Dear {{name}},\n\nThis is to inform you that your application (Dept Reg No: {{dept_reg_no}}) has been shortlisted for the entrance examination as part of Shailesh J. Mehta School of Management (SJMSOM), IIT Bombay, PhD Admissions for {{intake}}.\n\nThe Ph.D admission {{intake}} written test is scheduled on May 11, 2026,\nIf you clear the written test, the interview will be on May 12, 2026.\n\nAll the candidates are requested to bring the below documents during admission process:\n1.	Hard copy of your Ph.D application.\n2.	Print out of attached Admit Card.\n3.	Available scorecards of National level exams such as UGC/IIT/IISc/IIIT etc.\n4.	Marksheets of all semesters of UG and PG Programme.\n5.	Degree certificate of UG and PG Programme.\n6.	Hard copy of Research Proposal as per the format given in the link - https://www.som.iitb.ac.in/wp-content/uploads/2018/10/Sample-Research-Proposal.pdf (Statement of Proposal is not acceptable)\n7.	Work Experience Certificate, (if applicable).\n8.	Persons with Disability Certificate (for PwD category).\n9.	No Objection certificate from employer for students admitted in CT/SW/EX/IS.\n10.	Sponsorship Certificate for Sponsored / EX category students.\n11.	Caste Certificate for OBC-NC/SC/ST.\n12.	EWS certificate issued by the Competent Authority in the prescribed format.\n13.	Any other relevant certificates.\n\n\nBest regards,\nSJMSOM Admissions Office\nIIT Bombay",
   ],
   'interview' => [
     'subject' => 'Interview Shortlist — SJMSOM IITB PhD Admissions {{intake}}',
@@ -94,34 +94,54 @@ render_header('Email Communication', $u);
     </form>
   </div>
 
-  <div class="card">
-    <h3 class="font-semibold mb-2">Recipients</h3>
-    <div class="text-4xl font-bold text-indigo-700"><?= $count ?></div>
-    <p class="text-xs text-slate-500 mt-1"><?= h($countLabel) ?> — <?= $isIntl ? 'International' : 'Indian' ?></p>
+  <div class="space-y-4">
+    <div class="card">
+      <h3 class="font-semibold mb-2">Recipients</h3>
+      <div class="text-4xl font-bold text-indigo-700"><?= $count ?></div>
+      <p class="text-xs text-slate-500 mt-1"><?= h($countLabel) ?> — <?= $isIntl ? 'International' : 'Indian' ?></p>
 
-    <hr class="my-3 border-slate-200">
-    <h3 class="font-semibold mb-2 text-sm">SMTP</h3>
-    <div class="text-xs text-slate-600 space-y-0.5">
-      <div>Host: <code class="bg-slate-100 px-1"><?= h(SMTP_HOST) ?>:<?= (int)SMTP_PORT ?></code></div>
-      <div>From: <code class="bg-slate-100 px-1"><?= h(SMTP_FROM) ?></code></div>
-      <div class="text-slate-500 italic">Edit <code>src/config.php</code> to set real credentials.</div>
+      <hr class="my-3 border-slate-200">
+      <h3 class="font-semibold mb-2 text-sm">SMTP</h3>
+      <div class="text-xs text-slate-600 space-y-0.5">
+        <div>Host: <code class="bg-slate-100 px-1"><?= h(SMTP_HOST) ?>:<?= (int)SMTP_PORT ?></code></div>
+        <div>From: <code class="bg-slate-100 px-1"><?= h(SMTP_FROM) ?></code></div>
+        <div class="text-slate-500 italic">Edit <code>src/config.php</code> to set real credentials.</div>
+      </div>
+
+      <hr class="my-3 border-slate-200">
+      <h3 class="font-semibold mb-2 text-sm">Recent Batches</h3>
+      <div class="space-y-2 max-h-80 overflow-y-auto">
+        <?php foreach ($logs as $lg): ?>
+          <div class="text-xs border-l-2 border-indigo-300 pl-2 py-0.5 flex items-start justify-between gap-2">
+            <div>
+              <div class="font-semibold capitalize"><?= h($lg['phase']) ?> · <?= (int)$lg['recipient_count'] ?> sent</div>
+              <div class="text-slate-500"><?= h($lg['sent_at']) ?> · <?= h($lg['status']) ?></div>
+            </div>
+            <button type="button" class="batch-view-btn text-indigo-700 hover:underline shrink-0" data-batch-id="<?= (int)$lg['id'] ?>">View</button>
+          </div>
+        <?php endforeach; ?>
+        <?php if (!$logs): ?><p class="text-xs text-slate-500">No emails sent yet.</p><?php endif; ?>
+      </div>
     </div>
 
-    <hr class="my-3 border-slate-200">
-    <h3 class="font-semibold mb-2 text-sm">Recent Batches</h3>
-    <div class="space-y-2 max-h-80 overflow-y-auto">
-      <?php foreach ($logs as $lg): ?>
-        <div class="text-xs border-l-2 border-indigo-300 pl-2 py-0.5">
-          <div class="font-semibold capitalize"><?= h($lg['phase']) ?> · <?= (int)$lg['recipient_count'] ?> sent</div>
-          <div class="text-slate-500"><?= h($lg['sent_at']) ?> · <?= h($lg['status']) ?></div>
-        </div>
-      <?php endforeach; ?>
-      <?php if (!$logs): ?><p class="text-xs text-slate-500">No emails sent yet.</p><?php endif; ?>
+    <div class="card">
+      <h3 class="font-semibold mb-1 text-sm">Resend to specific RMG numbers</h3>
+      <p class="text-xs text-slate-500 mb-2">Comma- or newline-separated. Max 50. Uses the subject &amp; body above.</p>
+      <textarea id="rs_rmg_list" rows="3" class="font-mono text-xs" placeholder="RMG202610001, RMG202610045"></textarea>
+      <?php if ($phase === 'written'): ?>
+      <label class="flex items-center gap-2 mt-2 text-xs cursor-pointer">
+        <input type="checkbox" id="rs_attach_admit" checked>
+        <span>Attach each candidate's admit card (PDF)</span>
+      </label>
+      <?php endif; ?>
+      <div class="mt-3">
+        <button type="button" id="rsStartBtn" class="btn btn-primary btn-sm">Resend</button>
+      </div>
     </div>
   </div>
 </div>
 
-<script src="/phdportal/assets/js/admit_card.js"></script>
+<script src="/phdportal/assets/js/admit_card.js?v=<?= filemtime(PUBLIC_ROOT . '/assets/js/admit_card.js') ?>"></script>
 <script>
 const DELAY_MIN = <?= (int)MAIL_DELAY_MIN_MS ?>;
 const DELAY_MAX = <?= (int)MAIL_DELAY_MAX_MS ?>;
@@ -149,37 +169,12 @@ async function buildAdmitCardB64(cand, ctx) {
   return dataUri.split(',', 2)[1] || '';
 }
 
-$('#startBtn').on('click', async function() {
+async function runBatch(queueRes, attachAdmit) {
   const subject = $('#em_subject').val().trim();
   const body    = $('#em_body').val().trim();
-  if (!subject || !body) { alert('Subject and body are required.'); return; }
-  if (!confirm('Send emails to ' + <?= $count ?> + ' recipient(s)?\n\nRandom delay between sends: ' + (DELAY_MIN/1000).toFixed(1) + '–' + (DELAY_MAX/1000).toFixed(1) + 's')) return;
-  const password = prompt('Re-enter your admin password to confirm sending:');
-  if (password === null) return;
-  if (!password) { alert('Password is required.'); return; }
-
-  stopRequested = false;
-  $('#startBtn').prop('disabled', true).addClass('opacity-50');
-  $('#stopBtn').removeClass('hidden');
-  $('#progressBox').removeClass('hidden');
-  $('#progressDetails').empty();
-  $('#progressLabel').text('Verifying password & loading recipient list…');
-
-  // 1) Build queue (also verifies admin password server-side)
-  let queueRes;
-  try {
-    queueRes = await $.post('/phdportal/api/email_queue.php',
-      { csrf: window.CSRF_TOKEN, phase: PHASE, is_international: IS_INTL, subject, body, password });
-  } catch (e) { alert('Failed to build queue.'); resetUi(); return; }
-  if (!queueRes.ok) { alert(queueRes.error || 'Queue failed'); resetUi(); return; }
-
   const recipients = queueRes.recipients;
   const batchId = queueRes.batch_id;
   const total = recipients.length;
-  if (total === 0) { alert('No recipients.'); resetUi(); return; }
-
-  // Pre-load admit card assets once (written phase, if checkbox is on).
-  const attachAdmit = (PHASE === 'written') && $('#em_attach_admit').is(':checked');
   const admitCtx = {
     intakeName: queueRes.intake_name,
     examDatetime: queueRes.exam_datetime,
@@ -232,14 +227,180 @@ $('#startBtn').on('click', async function() {
   const status = stopRequested ? 'stopped' : (failed ? 'partial' : 'sent');
   await $.post('/phdportal/api/email_finalize.php', { csrf: window.CSRF_TOKEN, batch_id: batchId, status });
   $('#progressLabel').text((stopRequested ? 'Stopped — ' : 'Done — ') + sent + ' sent, ' + failed + ' failed.');
+}
+
+function startUi() {
+  stopRequested = false;
+  $('#startBtn,#rsStartBtn').prop('disabled', true).addClass('opacity-50');
+  $('#stopBtn').removeClass('hidden');
+  $('#progressBox').removeClass('hidden');
+  $('#progressDetails').empty();
+}
+
+function resetUi() {
+  $('#startBtn,#rsStartBtn').prop('disabled', false).removeClass('opacity-50');
+  $('#stopBtn').addClass('hidden');
+}
+
+$('#startBtn').on('click', async function() {
+  const subject = $('#em_subject').val().trim();
+  const body    = $('#em_body').val().trim();
+  if (!subject || !body) { alert('Subject and body are required.'); return; }
+  if (!confirm('Send emails to ' + <?= $count ?> + ' recipient(s)?\n\nRandom delay between sends: ' + (DELAY_MIN/1000).toFixed(1) + '–' + (DELAY_MAX/1000).toFixed(1) + 's')) return;
+  const password = prompt('Re-enter your admin password to confirm sending:');
+  if (password === null) return;
+  if (!password) { alert('Password is required.'); return; }
+
+  startUi();
+  $('#progressLabel').text('Verifying password & loading recipient list…');
+
+  let queueRes;
+  try {
+    queueRes = await $.post('/phdportal/api/email_queue.php',
+      { csrf: window.CSRF_TOKEN, phase: PHASE, is_international: IS_INTL, subject, body, password });
+  } catch (e) { alert('Failed to build queue.'); resetUi(); return; }
+  if (!queueRes.ok) { alert(queueRes.error || 'Queue failed'); resetUi(); return; }
+  if (queueRes.recipients.length === 0) { alert('No recipients.'); resetUi(); return; }
+
+  const attachAdmit = (PHASE === 'written') && $('#em_attach_admit').is(':checked');
+  await runBatch(queueRes, attachAdmit);
+  resetUi();
+});
+
+$('#rsStartBtn').on('click', async function() {
+  const subject = $('#em_subject').val().trim();
+  const body    = $('#em_body').val().trim();
+  const rmgList = $('#rs_rmg_list').val().trim();
+  if (!subject || !body) { alert('Subject and body are required.'); return; }
+  if (!rmgList) { alert('Enter at least one RMG number.'); return; }
+  const preview = rmgList.split(/[\s,;]+/).filter(Boolean);
+  if (!confirm('Resend to ' + preview.length + ' RMG number(s)?')) return;
+  const password = prompt('Re-enter your admin password to confirm sending:');
+  if (password === null) return;
+  if (!password) { alert('Password is required.'); return; }
+
+  startUi();
+  $('#progressLabel').text('Verifying password & looking up candidates…');
+
+  let queueRes;
+  try {
+    queueRes = await $.post('/phdportal/api/email_resend_queue.php',
+      { csrf: window.CSRF_TOKEN, phase: PHASE, rmg_list: rmgList, subject, body, password });
+  } catch (e) { alert('Failed to build resend queue.'); resetUi(); return; }
+  if (!queueRes.ok) {
+    let msg = queueRes.error || 'Queue failed';
+    if (queueRes.missing && queueRes.missing.length) msg += '\nNot found: ' + queueRes.missing.join(', ');
+    if (queueRes.no_email && queueRes.no_email.length) msg += '\nNo email: ' + queueRes.no_email.join(', ');
+    alert(msg);
+    resetUi();
+    return;
+  }
+  if (queueRes.missing && queueRes.missing.length) {
+    appendDetail('! Not found in DB: ' + queueRes.missing.join(', '), 'text-amber-700');
+  }
+  if (queueRes.no_email && queueRes.no_email.length) {
+    appendDetail('! No email on file: ' + queueRes.no_email.join(', '), 'text-amber-700');
+  }
+
+  const attachAdmit = (PHASE === 'written') && $('#rs_attach_admit').is(':checked');
+  await runBatch(queueRes, attachAdmit);
   resetUi();
 });
 
 $('#stopBtn').on('click', function(){ stopRequested = true; $('#progressLabel').text('Stopping after current send…'); });
 
-function resetUi() {
-  $('#startBtn').prop('disabled', false).removeClass('opacity-50');
-  $('#stopBtn').addClass('hidden');
-}
+// ---- Batch view modal ----
+let currentFailedRmgs = [];
+
+$(document).on('click', '.batch-view-btn', async function() {
+  const batchId = $(this).data('batch-id');
+  $('#batchModalTitle').text('Batch #' + batchId);
+  $('#batchModalMeta').text('Loading…');
+  $('#batchModalBody').empty();
+  $('#batchCopyFailedBtn').addClass('hidden');
+  currentFailedRmgs = [];
+  $('#batchModalBackdrop').removeClass('hidden');
+
+  let res;
+  try {
+    res = await $.get('/phdportal/api/email_log_view.php', { batch_id: batchId });
+  } catch (e) { $('#batchModalMeta').text('Failed to load.'); return; }
+  if (!res.ok) { $('#batchModalMeta').text(res.error || 'Failed to load.'); return; }
+
+  const b = res.batch, c = res.counts;
+  $('#batchModalTitle').text('Batch #' + b.id + ' — ' + b.phase);
+  $('#batchModalMeta').html(
+    '<span class="text-slate-600">' + b.sent_at + ' · ' + b.status + '</span>' +
+    ' · <span class="text-emerald-700">' + c.sent + ' sent</span>' +
+    ' · <span class="text-rose-700">' + c.failed + ' failed</span>'
+  );
+
+  const failedRmgs = [];
+  const $body = $('#batchModalBody');
+  if (res.recipients.length === 0) {
+    $body.html('<p class="text-sm text-slate-500 p-4">No per-recipient log for this batch.</p>');
+  } else {
+    const rows = res.recipients.map(r => {
+      const isFail = r.status === 'failed';
+      if (isFail && r.dept_reg_no) failedRmgs.push(r.dept_reg_no);
+      const cls = isFail ? 'bg-rose-50 text-rose-900' : '';
+      const statusBadge = isFail
+        ? '<span class="px-1.5 py-0.5 rounded bg-rose-200 text-rose-800 text-xs">failed</span>'
+        : '<span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-xs">sent</span>';
+      const err = isFail && r.error_msg ? '<div class="text-xs text-rose-700 mt-0.5">' + $('<div>').text(r.error_msg).html() + '</div>' : '';
+      return '<tr class="' + cls + '">' +
+        '<td class="px-2 py-1 font-mono text-xs">' + (r.dept_reg_no || '') + '</td>' +
+        '<td class="px-2 py-1 text-xs">' + (r.email || '') + err + '</td>' +
+        '<td class="px-2 py-1">' + statusBadge + '</td>' +
+        '<td class="px-2 py-1 text-xs text-slate-500">' + (r.sent_at || '') + '</td>' +
+      '</tr>';
+    }).join('');
+    $body.html(
+      '<table class="w-full text-sm">' +
+        '<thead class="bg-slate-50 text-slate-600 text-xs uppercase"><tr>' +
+          '<th class="px-2 py-1 text-left">RMG</th>' +
+          '<th class="px-2 py-1 text-left">Email</th>' +
+          '<th class="px-2 py-1 text-left">Status</th>' +
+          '<th class="px-2 py-1 text-left">Sent At</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>'
+    );
+  }
+
+  currentFailedRmgs = failedRmgs;
+  if (failedRmgs.length > 0) {
+    $('#batchCopyFailedBtn').removeClass('hidden').text('Copy ' + failedRmgs.length + ' failed RMG(s) to Resend');
+  }
+});
+
+$('#batchCopyFailedBtn').on('click', function() {
+  if (currentFailedRmgs.length === 0) return;
+  $('#rs_rmg_list').val(currentFailedRmgs.join(', '));
+  $('#batchModalBackdrop').addClass('hidden');
+  document.getElementById('rs_rmg_list').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  $('#rs_rmg_list').focus();
+});
+
+$('#batchModalCloseBtn, #batchModalBackdrop').on('click', function(e) {
+  if (e.target === this) $('#batchModalBackdrop').addClass('hidden');
+});
 </script>
+
+<div id="batchModalBackdrop" class="hidden fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col">
+    <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+      <div>
+        <h3 id="batchModalTitle" class="text-lg font-semibold">Batch</h3>
+        <div id="batchModalMeta" class="text-xs"></div>
+      </div>
+      <button type="button" id="batchModalCloseBtn" class="text-slate-500 hover:text-slate-700 text-2xl leading-none">&times;</button>
+    </div>
+    <div id="batchModalBody" class="flex-1 overflow-y-auto"></div>
+    <div class="px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2">
+      <button type="button" id="batchCopyFailedBtn" class="btn btn-primary btn-sm hidden">Copy failed RMGs to Resend</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="$('#batchModalBackdrop').addClass('hidden')">Close</button>
+    </div>
+  </div>
+</div>
 <?php render_footer(); ?>

@@ -554,18 +554,39 @@ function downloadAttendance() {
 function downloadSeating() {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  doc.setFontSize(14);
-  doc.text('SJMSOM IIT Bombay — Seating Arrangement', 14, 15);
-  doc.setFontSize(10);
-  doc.text('Intake: ' + INTAKE_NAME, 14, 22);
-  const body = ASSIGNMENTS.map((a, i) => [i + 1, a.dept_reg_no, a.name, a.room_name]);
-  doc.autoTable({
-    startY: 28,
-    head: [['S. No.','Dept Reg No','Name','Room']],
-    body,
-    styles: { fontSize: 9, cellPadding: 3 },
-    columnStyles: { 0: { cellWidth: 15, halign: 'center' } },
-    headStyles: { fillColor: [79,70,229] }
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const examDate = formatExamDate(ENTRANCE_DATETIME);
+
+  const drawHeader = () => {
+    doc.setFontSize(14);
+    doc.text('SJMSOM IIT Bombay — Seating Arrangement', 14, 15);
+    doc.setFontSize(10);
+    doc.text('Intake: ' + INTAKE_NAME, pageWidth - 14, 12, { align: 'right' });
+    doc.text('Date: ' + (examDate || '________________'), pageWidth - 14, 18, { align: 'right' });
+  };
+
+  const grouped = {};
+  ASSIGNMENTS.forEach(a => { (grouped[a.room_name] = grouped[a.room_name] || []).push(a); });
+  let first = true;
+  Object.keys(grouped).forEach(rn => {
+    if (!first) doc.addPage();
+    first = false;
+    drawHeader();
+    doc.setFontSize(12);
+    doc.text('Room: ' + rn + (grouped[rn][0].is_pwd_scribe == 1 ? '  [PWD/Scribe]' : ''), 14, 28);
+    const body = grouped[rn].map((a, i) => [i + 1, a.dept_reg_no, a.name]);
+    doc.autoTable({
+      startY: 34,
+      head: [['S. No.','Dept Reg No','Name']],
+      body,
+      styles: { fontSize: 9, cellPadding: 3 },
+      columnStyles: { 0: { cellWidth: 15, halign: 'center' }, 1: { cellWidth: 35 } },
+      headStyles: { fillColor: [79,70,229] },
+      margin: { top: 34 },
+      didDrawPage: (data) => {
+        if (data.pageNumber > 1) drawHeader();
+      }
+    });
   });
   doc.save('Seating_' + INTAKE_NAME.replace(/\s+/g,'_') + '.pdf');
 }

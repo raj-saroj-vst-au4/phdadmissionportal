@@ -39,11 +39,31 @@
     return canvas.toDataURL('image/png');
   }
 
+  function _blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  }
+
   async function _loadPhoto(filename) {
     if (!filename) return null;
     if (PHOTO_CACHE[filename] !== undefined) return PHOTO_CACHE[filename];
-    const img = await _loadImage(PHOTO_URL_BASE + encodeURIComponent(filename));
-    const result = img ? { dataUrl: _toDataUrl(img), w: img.naturalWidth, h: img.naturalHeight } : null;
+    let result = null;
+    try {
+      const resp = await fetch(PHOTO_URL_BASE + encodeURIComponent(filename));
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const dataUrl = await _blobToDataUrl(blob);
+        const img = await _loadImage(dataUrl);
+        if (img) {
+          const fmt = (blob.type === 'image/png') ? 'PNG' : 'JPEG';
+          result = { dataUrl, w: img.naturalWidth, h: img.naturalHeight, format: fmt };
+        }
+      }
+    } catch (_) { /* fall through */ }
     PHOTO_CACHE[filename] = result;
     return result;
   }
@@ -114,7 +134,7 @@
       if (ph > PHOTO_BOX_H) { ph = PHOTO_BOX_H; pw = PHOTO_BOX_H * pRatio; }
       const px = PHOTO_BOX_X + (PHOTO_BOX_W - pw) / 2;
       const py = PHOTO_BOX_Y + (PHOTO_BOX_H - ph) / 2;
-      doc.addImage(photo.dataUrl, 'PNG', px, py, pw, ph);
+      doc.addImage(photo.dataUrl, photo.format || 'JPEG', px, py, pw, ph);
       doc.setDrawColor(200,200,200); doc.setLineWidth(0.2);
       doc.rect(PHOTO_BOX_X, PHOTO_BOX_Y, PHOTO_BOX_W, PHOTO_BOX_H);
       doc.setDrawColor(79,70,229); doc.setLineWidth(0.8);

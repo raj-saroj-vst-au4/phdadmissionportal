@@ -2,7 +2,8 @@
 // One-time installer: seeds admin user, panels, default intake.
 require __DIR__ . '/../src/db.php';
 
-$adminPass = 'admin@2026';
+$adminUser = 'phdcoord';
+$adminPass = 'Phd@2026';
 $panelPass = 'panel@2026';
 
 $pdo = db();
@@ -10,7 +11,7 @@ $pdo = db();
 // Admin
 $pdo->prepare('INSERT INTO users(username,password_hash,full_name,role) VALUES(?,?,?,?)
   ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash), full_name=VALUES(full_name), role=VALUES(role)')
-    ->execute(['admin', password_hash($adminPass, PASSWORD_DEFAULT), 'Administrator', 'admin']);
+    ->execute([$adminUser, password_hash($adminPass, PASSWORD_DEFAULT), 'Administrator', 'admin']);
 
 // Panel profiles (Research Areas) matching SJMSOM PhD areas
 $panels = [
@@ -46,5 +47,5 @@ if (!$exists || (int)$exists['c'] === 0) {
 }
 
 echo "Install complete.\n";
-echo "Admin login: admin / $adminPass\n";
+echo "Admin login: $adminUser / $adminPass\n";
 echo "Panel logins (8): panel_mg, panel_ob, panel_op, panel_fn, panel_mk, panel_it, panel_sm, panel_en (password: $panelPass)\n";

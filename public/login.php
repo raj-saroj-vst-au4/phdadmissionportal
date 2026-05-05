@@ -195,7 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <button class="btn-signin mt-2">Sign in</button>
       </form>
 
-      <details class="mt-8 bg-white border border-slate-200 rounded-xl">
+      <!-- <details class="mt-8 bg-white border border-slate-200 rounded-xl">
         <summary class="flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-700">
           <span class="flex items-center gap-2">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
@@ -220,7 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           </div>
           <div class="text-slate-500">Panel password: <span class="cred-pill">panel@2026</span></div>
         </div>
-      </details>
+      </details> -->
 
     </div>
   </div>

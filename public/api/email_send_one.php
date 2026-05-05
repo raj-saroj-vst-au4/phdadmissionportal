@@ -41,6 +41,12 @@ $res = send_mail($c['email'], $c['name'], $subject, $html, $attachments);
 if ($res['ok']) {
     q('UPDATE email_log SET recipient_count = recipient_count + 1 WHERE id=?', [$batchId]);
 }
+q('INSERT INTO email_log_recipient(batch_id,candidate_id,dept_reg_no,email,status,error_msg)
+   VALUES(?,?,?,?,?,?)',
+  [$batchId, $c['id'], $c['dept_reg_no'], $c['email'],
+   $res['ok'] ? 'sent' : 'failed',
+   $res['ok'] ? null : mb_substr((string)$res['error'], 0, 500)]);
+
 json_out([
     'ok' => $res['ok'],
     'error' => $res['error'],

@@ -133,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_select_all'])) {
         'ST'     => (int)($intakeFull['ta_seats_st']  ?? 0),
         'EWS'    => (int)($intakeFull['ta_seats_ews'] ?? 0),
     ];
+    $pwdSeats = (int)($intakeFull['ta_seats_pwd'] ?? 0);
 
     $cands = all("SELECT c.id, c.birth_category, c.ews, c.disabled,
                          c.categories_applied, c.revised_categories_applied, c.panel_code,
@@ -142,8 +143,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_select_all'])) {
                   FROM candidates c
                   WHERE c.intake_id=? AND c.is_international=0 AND c.screening_status='Yes'", [$intake['id']]);
 
-    $taByBirthCat = [];      // effective_cat -> [{id, amg}]
-    $nonTaByApplied = [];    // applied_cat   -> [{id, amg}]
+    $taPool = [];            // [{id, amg, isPwd, homeBucket, gnOK}]
+    $nonTaByApplied = [];    // applied_cat -> [{id, amg}]
     foreach ($cands as $c) {
         $applied = normalize_categories_applied(
             trim((string)($c['revised_categories_applied'] ?? '')) !== ''
@@ -162,32 +163,126 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_select_all'])) {
         if ($amg < $threshold) continue;
 
         if ($applied === 'TA') {
-            if (!isset($seatMap[$ec])) continue; // no TA seats defined for this category
-            $taByBirthCat[$ec][] = ['id' => (int)$c['id'], 'amg' => $amg];
+            // PWD is horizontal: PWD candidates compete in their birth-category bucket
+            // (the relaxed cutoff above already gives them the PWD threshold). EWS keeps its own bucket.
+            $isPwd = ($ec === 'PWD');
+            $homeBucket = $isPwd ? ($c['birth_category'] ?? null) : $ec;
+            if (!isset($seatMap[$homeBucket])) continue;
+            // GN seats are open: any candidate clearing the base (100%) cutoff competes for them.
+            $gnOK = $amg >= $cutoffVal * 1.0;
+            $taPool[] = [
+                'id' => (int)$c['id'], 'amg' => $amg, 'isPwd' => $isPwd,
+                'homeBucket' => $homeBucket, 'gnOK' => $gnOK,
+            ];
         } else {
-            $nonTaByApplied[$applied][] = ['id' => (int)$c['id'], 'amg' => $amg];
+            $nonTaByApplied[$applied][] = ['id' => (int)$c['id'], 'amg' => $amg, 'birth' => $c['birth_category'] ?? ''];
         }
     }
 
-    $totalSelected = 0;
-    $taCounts = [];
-    foreach ($taByBirthCat as $cat => $list) {
-        usort($list, fn($a, $b) => $b['amg'] <=> $a['amg']);
-        $assign = min(count($list), $seatMap[$cat]);
-        for ($i = 0; $i < $assign; $i++) {
-            $tag = $cat . '-TA-' . ($i + 1);
-            q("UPDATE candidates SET final_status='Selected', birth_category_number=? WHERE id=? AND intake_id=?",
-              [$tag, $list[$i]['id'], $intake['id']]);
+    // Phase 1 — GN open allocation. Top ta_seats_gn by AM Global desc among candidates clearing the
+    // base cutoff (100% threshold). A non-GN-home candidate (e.g. SC, OBC) can take a GN seat on merit.
+    $gnEligible = array_values(array_filter($taPool, fn($p) => !empty($p['gnOK'])));
+    usort($gnEligible, fn($a, $b) => $b['amg'] <=> $a['amg']);
+    $gnSelected = array_slice($gnEligible, 0, $seatMap['GN']);
+    $gnSelectedIds = array_flip(array_column($gnSelected, 'id'));
+
+    // Phase 2 — Reserved allocation per home bucket, excluding candidates already taken by GN.
+    $selByCat  = ['GN' => $gnSelected];
+    $waitByCat = ['GN' => []];
+    foreach (['OBC-NC', 'SC', 'ST', 'EWS'] as $rc) {
+        $pool = array_values(array_filter($taPool, fn($p) =>
+            $p['homeBucket'] === $rc && !isset($gnSelectedIds[$p['id']])
+        ));
+        usort($pool, fn($a, $b) => $b['amg'] <=> $a['amg']);
+        $cap = $seatMap[$rc];
+        $selByCat[$rc]  = array_slice($pool, 0, $cap);
+        $waitByCat[$rc] = array_slice($pool, $cap);
+    }
+    // GN waitlist: GN-home candidates not selected anywhere.
+    $allSelIds = $gnSelectedIds;
+    foreach (['OBC-NC', 'SC', 'ST', 'EWS'] as $rc) foreach ($selByCat[$rc] as $r) $allSelIds[$r['id']] = true;
+    foreach ($taPool as $p) {
+        if ($p['homeBucket'] === 'GN' && !isset($allSelIds[$p['id']])) {
+            $waitByCat['GN'][] = $p;
         }
-        if ($assign > 0) $taCounts[$cat] = $assign;
-        $totalSelected += $assign;
+    }
+
+    // Phase 3 — enforce PWD horizontal reservation. PWD seats are not separate; they are a subset
+    // of birth-category (incl. GN) seats. If naturally selected PWD < ta_seats_pwd, displace the
+    // lowest-AM-Global non-PWD selection in the unselected PWD candidate's birth-category bucket.
+    // The displaced candidate falls back to their own home bucket's waitlist.
+    $naturalPwd = 0;
+    foreach ($selByCat as $list) foreach ($list as $r) if (!empty($r['isPwd'])) $naturalPwd++;
+    $pwdGap = max(0, $pwdSeats - $naturalPwd);
+    $pwdDisplaced = 0;
+    if ($pwdGap > 0) {
+        $selectedIdsNow = [];
+        foreach ($selByCat as $list) foreach ($list as $r) $selectedIdsNow[$r['id']] = true;
+        $unselectedPwd = array_values(array_filter($taPool, fn($p) =>
+            !empty($p['isPwd']) && !isset($selectedIdsNow[$p['id']])
+        ));
+        usort($unselectedPwd, fn($a, $b) => $b['amg'] <=> $a['amg']);
+
+        foreach ($unselectedPwd as $pwd) {
+            if ($pwdDisplaced >= $pwdGap) break;
+            $cat = $pwd['homeBucket'];
+            usort($selByCat[$cat], fn($a, $b) => $b['amg'] <=> $a['amg']);
+            $lowestIdx = -1;
+            for ($i = count($selByCat[$cat]) - 1; $i >= 0; $i--) {
+                if (empty($selByCat[$cat][$i]['isPwd'])) { $lowestIdx = $i; break; }
+            }
+            if ($lowestIdx === -1) continue; // bucket has only PWD selections — nothing to displace
+            // Find the PWD candidate row in any waitlist (their home is $cat, but if GN promotion
+            // existed they may sit in a different waitlist — search exhaustively).
+            $pwdRow = null;
+            foreach ($waitByCat as $wc => $list) {
+                foreach ($list as $j => $w) {
+                    if ($w['id'] === $pwd['id']) { $pwdRow = $w; array_splice($waitByCat[$wc], $j, 1); break 2; }
+                }
+            }
+            if ($pwdRow === null) continue;
+            $displaced = $selByCat[$cat][$lowestIdx];
+            array_splice($selByCat[$cat], $lowestIdx, 1);
+            $selByCat[$cat][] = $pwdRow;
+            // Displaced candidate falls back to their own home bucket's waitlist.
+            $waitByCat[$displaced['homeBucket']][] = $displaced;
+            $pwdDisplaced++;
+        }
+    }
+
+    // Phase 4 — write Selected / Waitlisted, ranked by AM Global desc within each bucket.
+    $totalSelected = 0;
+    $totalWaitlisted = 0;
+    $taCounts = [];
+    $taWaitCounts = [];
+    foreach (['GN', 'OBC-NC', 'SC', 'ST', 'EWS'] as $cat) {
+        if (empty($selByCat[$cat]) && empty($waitByCat[$cat])) continue;
+        usort($selByCat[$cat],  fn($a, $b) => $b['amg'] <=> $a['amg']);
+        usort($waitByCat[$cat], fn($a, $b) => $b['amg'] <=> $a['amg']);
+        foreach ($selByCat[$cat] as $i => $r) {
+            // PWD candidates are tagged with a PWD- prefix to mark the horizontal reservation seat,
+            // e.g. PWD-GN-TA-2. Rank (n) is the candidate's position in the bucket by AM Global desc.
+            $tag = (!empty($r['isPwd']) ? 'PWD-' : '') . $cat . '-TA-' . ($i + 1);
+            q("UPDATE candidates SET final_status='Selected', birth_category_number=? WHERE id=? AND intake_id=?",
+              [$tag, $r['id'], $intake['id']]);
+        }
+        if (count($selByCat[$cat]) > 0) $taCounts[$cat] = count($selByCat[$cat]);
+        $totalSelected += count($selByCat[$cat]);
+        foreach ($waitByCat[$cat] as $i => $r) {
+            $tag = 'WL-' . (!empty($r['isPwd']) ? 'PWD-' : '') . $cat . '-TA-' . ($i + 1);
+            q("UPDATE candidates SET final_status='Waitlisted', birth_category_number=? WHERE id=? AND intake_id=?",
+              [$tag, $r['id'], $intake['id']]);
+        }
+        if (count($waitByCat[$cat]) > 0) $taWaitCounts[$cat] = count($waitByCat[$cat]);
+        $totalWaitlisted += count($waitByCat[$cat]);
     }
 
     $nonTaCounts = [];
     foreach ($nonTaByApplied as $applied => $list) {
         usort($list, fn($a, $b) => $b['amg'] <=> $a['amg']);
         foreach ($list as $i => $row) {
-            $tag = $applied . '-' . ($i + 1);
+            $birth = trim((string)($row['birth'] ?? ''));
+            $tag = ($birth !== '' ? $birth . '-' : '') . $applied . '-' . ($i + 1);
             q("UPDATE candidates SET final_status='Selected', birth_category_number=? WHERE id=? AND intake_id=?",
               [$tag, $row['id'], $intake['id']]);
         }
@@ -195,13 +290,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_select_all'])) {
         $totalSelected += count($list);
     }
 
-    if ($totalSelected === 0) {
+    if ($totalSelected === 0 && $totalWaitlisted === 0) {
         flash_set('Auto-select: no eligible candidates met the criteria.', 'info');
     } else {
         $parts = [];
         foreach ($taCounts as $cat => $n) $parts[] = "$cat-TA: $n";
         foreach ($nonTaCounts as $cat => $n) $parts[] = "$cat: $n";
-        flash_set("Auto-select: $totalSelected selected (" . implode(', ', $parts) . ').', 'success');
+        $msg = "Auto-select: $totalSelected selected (" . implode(', ', $parts) . ')';
+        if ($totalWaitlisted > 0) {
+            $waitParts = [];
+            foreach ($taWaitCounts as $cat => $n) $waitParts[] = "$cat-TA: $n";
+            $msg .= "; $totalWaitlisted waitlisted (" . implode(', ', $waitParts) . ')';
+        }
+        if ($pwdDisplaced > 0) {
+            $msg .= "; PWD reservation displaced $pwdDisplaced non-PWD selection(s)";
+        }
+        flash_set($msg . '.', 'success');
     }
     redirect('/phdportal/admin/final.php');
 }
@@ -473,7 +577,7 @@ $(document).on('keydown', e => { if (e.key === 'Escape') $('#unfreezeBackdrop').
   <?php endif; ?>
 
   <?php if ($amgFrozen && !$frozen): ?>
-    <form method="post" class="inline ml-auto" onsubmit="return confirm('Auto-select all eligible candidates (interview marks present, unanimously recommended, AM Global ≥ category-adjusted cutoff)?\n\nBase cutoff: <?= h($amgCutoff) ?>\n• GN / EWS: 100% (≥ <?= number_format((float)$amgCutoff, 2) ?>)\n• OBC-NC: 90% (≥ <?= number_format((float)$amgCutoff * 0.9, 2) ?>)\n• SC / ST / PWD: 66.67% (≥ <?= number_format((float)$amgCutoff * 0.6667, 2) ?>)\n\n• TA: capped at TA seats per birth category, tagged like GN-TA-1.\n• Non-TA: no cap, tagged like SF-1, FA-1.\n\nExisting Selected statuses may be overwritten.');">
+    <form method="post" class="inline ml-auto" onsubmit="return confirm('Auto-select all eligible candidates (interview marks present, unanimously recommended, AM Global ≥ category-adjusted cutoff)?\n\nBase cutoff: <?= h($amgCutoff) ?>\n• GN / EWS: 100% (≥ <?= number_format((float)$amgCutoff, 2) ?>)\n• OBC-NC: 90% (≥ <?= number_format((float)$amgCutoff * 0.9, 2) ?>)\n• SC / ST / PWD: 66.67% (≥ <?= number_format((float)$amgCutoff * 0.6667, 2) ?>)\n\n• GN seats are open: top AM Global candidates from any birth category clearing the base (100%) cutoff fill them first.\n• Reserved seats (OBC-NC / SC / ST / EWS) then fill from remaining home-bucket candidates.\n• PWD reservation is horizontal (subset of birth-category seats). If qualifying PWD candidates < ta_seats_pwd, the lowest-AM-Global non-PWD selection in that PWD candidate''s birth category is displaced to the waitlist.\n• Tags: <Cat>-TA-N (e.g. GN-TA-1, SC-TA-2). PWD candidates carry a PWD- prefix (e.g. PWD-GN-TA-2). Waitlist: WL-... (e.g. WL-GN-TA-1, WL-PWD-SC-TA-1).\n• Non-TA: no cap, tagged like SF-1, FA-1.\n\nExisting Selected / Waitlisted statuses may be overwritten.');">
       <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
       <input type="hidden" name="auto_select_all" value="1">
       <button type="submit" class="btn btn-primary text-xs">Auto-Select for All</button>
@@ -694,15 +798,22 @@ function downloadFinalPdf() {
   document.querySelectorAll('#finalTable tbody tr').forEach(tr => {
     const cells = tr.querySelectorAll('td');
     if (cells.length < 11) return;
+    const researchSpans = cells[2].querySelectorAll('span');
+    const researchText = researchSpans.length >= 2
+      ? researchSpans[1].innerText.trim()
+      : cells[2].innerText.trim();
+    const statusSel = cells[7].querySelector('select');
+    const statusText = statusSel
+      ? statusSel.options[statusSel.selectedIndex].text
+      : cells[7].innerText.trim();
     rows.push([
       cells[0].innerText.trim(),
       cells[1].innerText.trim(),
-      cells[2].innerText.trim(),
+      researchText,
       cells[3].innerText.trim(),
       cells[4].innerText.trim(),
-      cells[5].innerText.trim(),
       cells[6].innerText.trim(),
-      cells[7].innerText.trim(),
+      statusText,
       cells[8].innerText.trim(),
       cells[9].innerText.trim(),
       cells[10].innerText.trim(),
@@ -710,7 +821,7 @@ function downloadFinalPdf() {
   });
   doc.autoTable({
     startY: 26,
-    head: [['Dept Reg No','Name','Research Cat','Written','Interview Marks','Adjusted Panel Mean','Adjusted Global Mean','Status','Applied Category','Birth Cat','Birth Cat #']],
+    head: [['Dept Reg No','Name','Research Cat','Written','Raw Interview','Adjusted Global Mean','Status','Applied Category','Birth Cat','Birth Cat #']],
     body: rows,
     styles: { fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [79,70,229] }

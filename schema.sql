@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS intakes (
     ta_seats_sc  INT NULL,
     ta_seats_st  INT NULL,
     ta_seats_ews INT NULL,
+    ta_seats_pwd INT NULL,
     is_active TINYINT(1) DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_intake (season, year)
@@ -178,4 +179,17 @@ CREATE TABLE IF NOT EXISTS email_log (
     sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(30) DEFAULT 'sent',
     KEY idx_intake (intake_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS email_log_recipient (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    batch_id INT NOT NULL,
+    candidate_id INT NULL,
+    dept_reg_no VARCHAR(40) NULL,
+    email VARCHAR(255) NULL,
+    status VARCHAR(20) NOT NULL,
+    error_msg VARCHAR(500) NULL,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_batch (batch_id),
+    KEY idx_status (status)
 ) ENGINE=InnoDB;

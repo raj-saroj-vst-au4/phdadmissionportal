@@ -54,7 +54,7 @@ if (!empty($intake['entrance_datetime'])) {
     if ($ts) $exam_dt_display = date('d M Y, h:i A', $ts);
 }
 ?>
-<script src="/phdportal/assets/js/admit_card.js"></script>
+<script src="/phdportal/assets/js/admit_card.js?v=<?= filemtime(PUBLIC_ROOT . '/assets/js/admit_card.js') ?>"></script>
 <script>
 const INTAKE_NAME = <?= json_encode($intake['name']) ?>;
 const EXAM_DATETIME = <?= json_encode($exam_dt_display) ?>;

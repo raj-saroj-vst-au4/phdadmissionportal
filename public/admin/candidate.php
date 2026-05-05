@@ -99,9 +99,9 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
       <dt class="text-slate-500">CFTI?</dt><dd><?= h($c['cfti']) ?></dd>
       <dt class="text-slate-500">IIT BTech?</dt><dd><?= h($c['iit_btech']) ?></dd>
       <dt class="text-slate-500">Categories Applied</dt><dd><?= h(normalize_categories_applied($c['categories_applied'])) ?></dd>
-      <dt class="text-slate-500">Revised Category</dt>
       <?php $revDisp = normalize_categories_applied($c['revised_categories_applied'] ?? null); ?>
-      <dd><?= $revDisp ? '<span class="font-semibold text-indigo-700">'.h($revDisp).'</span>' : '<span class="text-slate-400">—</span>' ?></dd>
+      <dt class="<?= $revDisp ? 'text-indigo-700 font-semibold bg-indigo-50 px-1 rounded' : 'text-slate-500' ?>">Revised Category</dt>
+      <dd><?= $revDisp ? '<span class="inline-block px-2 py-0.5 text-xs font-semibold rounded bg-indigo-600 text-white">'.h($revDisp).'</span>' : '<span class="text-slate-400">—</span>' ?></dd>
       <dt class="text-slate-500">Email</dt><dd><?= h($c['email']) ?></dd>
       <dt class="text-slate-500">Qualifying Exam</dt><dd><?= h($c['qualifying_exam']) ?> &middot; <?= h($c['qualifying_discipline']) ?> (<?= h($c['passing_year']) ?>)</dd>
       <dt class="text-slate-500">Percentage / CPI</dt><dd><?= h($c['percentage']) ?>% &nbsp;<?= h($c['original_percentage']) ?> / <?= h($c['original_percentage_out_of']) ?> &nbsp;CPI: <?= h($c['cpi_grade']) ?></dd>
@@ -176,14 +176,19 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
     </div>
 
     <!-- Revised Application Category -->
-    <div class="card">
-      <h3 class="font-semibold mb-2">Revised Application Category</h3>
+    <?php
+      $revOpts = ['TA','SF','EX','CT','TAP','FA','SW','IS'];
+      $revCurrent = normalize_categories_applied($c['revised_categories_applied'] ?? null);
+    ?>
+    <div class="card<?= $revCurrent ? ' ring-2 ring-indigo-500 bg-indigo-50' : '' ?>">
+      <h3 class="font-semibold mb-2">
+        Revised Application Category
+        <?php if ($revCurrent): ?>
+          <span class="ml-1 inline-block px-2 py-0.5 text-xs font-semibold rounded bg-indigo-600 text-white align-middle"><?= h($revCurrent) ?></span>
+        <?php endif; ?>
+      </h3>
       <p class="text-xs text-slate-500 mb-1">Original: <span class="font-mono"><?= h(normalize_categories_applied($c['categories_applied']) ?: '—') ?></span></p>
       <label class="text-xs font-medium">Revised</label>
-      <?php
-        $revOpts = ['TA','SF','EX','CT','TAP','FA','SW','IS'];
-        $revCurrent = normalize_categories_applied($c['revised_categories_applied'] ?? null);
-      ?>
       <select name="revised_categories_applied">
         <option value="">—</option>
         <?php foreach ($revOpts as $ro): ?>
