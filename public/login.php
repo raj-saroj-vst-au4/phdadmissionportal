@@ -23,8 +23,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <meta charset="utf-8">
 <title>Sign In - <?= h(APP_NAME) ?></title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="https://cdn.tailwindcss.com"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="/phdportal/assets/vendor/tailwind.js"></script>
+<link href="/phdportal/assets/vendor/inter.css" rel="stylesheet">
 <style>
   body { font-family: 'Inter', system-ui, sans-serif; }
   .hero-bg {
@@ -209,13 +209,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <span class="cred-pill">admin@2026</span>
           </div>
           <div><strong class="text-slate-800">Panels:</strong>
-            <span class="cred-pill">panel_mg</span>,
-            <span class="cred-pill">panel_ob</span>,
-            <span class="cred-pill">panel_op</span>,
-            <span class="cred-pill">panel_fn</span>,
+            <span class="cred-pill">panel_ep</span>,
             <span class="cred-pill">panel_mk</span>,
-            <span class="cred-pill">panel_it</span>,
-            <span class="cred-pill">panel_sm</span>,
+            <span class="cred-pill">panel_tm</span>,
+            <span class="cred-pill">panel_ds</span>,
+            <span class="cred-pill">panel_fn</span>,
+            <span class="cred-pill">panel_om</span>,
+            <span class="cred-pill">panel_hr</span>,
             <span class="cred-pill">panel_en</span>
           </div>
           <div class="text-slate-500">Panel password: <span class="cred-pill">panel@2026</span></div>

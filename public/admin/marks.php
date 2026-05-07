@@ -305,21 +305,21 @@ render_header('Marks Entry', $u);
       4 => 'Section 4 — Data Interpretation',
     ];
   ?>
-  <div class="card p-0 overflow-x-auto">
+  <div class="card p-0 overflow-auto" style="max-height: calc(100vh - 180px);">
   <table class="data-table w-full">
     <thead>
       <tr>
         <th rowspan="2">Sr</th>
         <th rowspan="2">Dept Reg No</th>
         <th rowspan="2">Name</th>
-        <?php foreach ($sectionTitles as $title): ?>
-          <th colspan="2" class="text-center border-l border-slate-200"><?= h($title) ?></th>
+        <?php foreach ($sectionTitles as $idx => $title): ?>
+          <th colspan="2" class="text-center border-l border-slate-200 sec-col-<?= $idx ?>"><?= h($title) ?></th>
         <?php endforeach; ?>
       </tr>
       <tr>
         <?php for ($s = 1; $s <= 4; $s++): ?>
-          <th class="text-center text-xs border-l border-slate-200" style="width:80px">Correct</th>
-          <th class="text-center text-xs" style="width:80px">Wrong</th>
+          <th class="text-center text-xs border-l border-slate-200 sec-col-<?= $s ?>" style="width:80px">Correct</th>
+          <th class="text-center text-xs sec-col-<?= $s ?>" style="width:80px">Wrong</th>
         <?php endfor; ?>
       </tr>
     </thead>
@@ -332,14 +332,14 @@ render_header('Marks Entry', $u);
         </td>
         <td><?= h($r['name']) ?></td>
         <?php for ($s = 1; $s <= 4; $s++): ?>
-          <td class="border-l border-slate-200">
+          <td class="border-l border-slate-200 sec-col-<?= $s ?>">
             <input type="number" min="0" max="15" step="1" name="s<?= $s ?>_correct[<?= (int)$r['id'] ?>]"
                    value="<?= h($r['s'.$s.'_correct']) ?>" placeholder="—"
                    class="w-16 text-sm text-center sec-inp"
                    data-section="<?= $s ?>" data-kind="c"
                    <?= $frozen ? 'disabled' : '' ?>>
           </td>
-          <td>
+          <td class="sec-col-<?= $s ?>">
             <input type="number" min="0" max="15" step="1" name="s<?= $s ?>_wrong[<?= (int)$r['id'] ?>]"
                    value="<?= h($r['s'.$s.'_wrong']) ?>" placeholder="—"
                    class="w-16 text-sm text-center sec-inp"
@@ -605,6 +605,17 @@ $(document).on('keydown', e => {
 <?php endif; ?>
 </script>
 <style>
+.sec-col-1 { background: #eff6ff; }   /* light blue */
+.sec-col-2 { background: #f5f3ff; }   /* light violet */
+.sec-col-3 { background: #ecfeff; }   /* light cyan */
+.sec-col-4 { background: #fdf2f8; }   /* light pink */
+/* Sticky header — keeps section columns labelled while scrolling long lists */
+.data-table thead th { position: sticky; top: 0; z-index: 5; }
+.data-table thead tr:nth-child(2) th { top: 32px; }
+.data-table thead th.sec-col-1 { background: #eff6ff; }
+.data-table thead th.sec-col-2 { background: #f5f3ff; }
+.data-table thead th.sec-col-3 { background: #ecfeff; }
+.data-table thead th.sec-col-4 { background: #fdf2f8; }
 tr.row-saving  input[type="number"] { background: #fef9c3; }
 tr.row-saved   input[type="number"] { background: #ecfdf5; }
 tr.row-error   input[type="number"] { background: #fee2e2; }

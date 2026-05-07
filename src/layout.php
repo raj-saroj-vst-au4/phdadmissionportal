@@ -9,11 +9,11 @@ function render_header(string $title, ?array $user = null): void {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title><?= h($title) ?> - <?= h(APP_NAME) ?></title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<script src="/phdportal/assets/vendor/tailwind.js"></script>
+<script src="/phdportal/assets/vendor/jquery.min.js"></script>
+<script src="/phdportal/assets/vendor/chart.umd.min.js"></script>
+<script src="/phdportal/assets/vendor/jspdf.umd.min.js"></script>
+<script src="/phdportal/assets/vendor/jspdf-autotable.min.js"></script>
 <link rel="stylesheet" href="/phdportal/assets/css/app.css">
 <script>window.CSRF_TOKEN = <?= json_encode(csrf_token()) ?>;</script>
 </head>
@@ -107,7 +107,7 @@ function render_footer(): void {
     ?>
 </main>
 <footer class="max-w-7xl mx-auto px-4 py-6 text-xs text-slate-500 text-center">
-  &copy; <?= date('Y') ?> SJMSOM, IIT Bombay
+  &copy; <?= date('Y') ?> SJMSOM, IIT Bombay | Issues/Feedback: <a href="mailto:raj.saroj@iitb.ac.in" class="hover:underline">raj.saroj@iitb.ac.in</a>
 </footer>
 </body>
 </html>

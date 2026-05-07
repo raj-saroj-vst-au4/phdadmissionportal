@@ -332,25 +332,42 @@ if (isset($_GET['export'])) {
     header('Content-Type: text/csv; charset=utf-8');
 
     if ($kind === 'formatb') {
-        // Format B: CSV with detailed columns (one row per selected candidate)
+        // Format B: full roster of (non-international) candidates for the intake.
+        // Non-shortlisted candidates are included too so blank "Consider for TA" /
+        // Remarks rows reflect the complete admission picture.
+        $rowsB = all("SELECT c.dept_reg_no, c.name, c.birth_category, c.ews, c.disabled,
+                      c.panel_code, c.final_status,
+                      (SELECT AVG(m.total_marks) FROM interview_marks m WHERE m.candidate_id=c.id) avg_interview
+                      FROM candidates c
+                      WHERE c.intake_id=? AND c.is_international=0
+                      ORDER BY c.dept_reg_no", [$intake['id']]);
         header('Content-Disposition: attachment; filename="FormatB_' . date('Ymd') . '.csv"');
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['Sl No','Dept Reg No','Name','Gender','Birth Cat','EWS','PWD','Applied',
-                       'Research Cat','Research Area','Qualifying Exam','GATE Score',
-                       'Written','Interview Marks','Adjusted Panel Mean','Adjusted Global Mean','Final Status','Category','Birth Cat #']);
+        fputcsv($out, ['PhD Admission ' . $intake['name']]);
+        fputcsv($out, ['Sr. No.', 'Dept reg no.', 'Name', 'Birth Category', 'EWS', 'PwD',
+                       'Interview status', 'Total marks',
+                       'Marks obtained in written test/interview',
+                       'Consider for TA', 'Remarks']);
         $i = 1;
-        foreach ($rows as $r) {
-            if ($r['final_status'] === 'Selected' || $r['final_status'] === 'Waitlisted') {
-                $adj = $adjusted($r); $adjG = $adjustedGlobal($r);
-                fputcsv($out, [$i++, $r['dept_reg_no'], $r['name'], $r['gender'],
-                    $r['birth_category'], $r['ews'], $r['disabled'], normalize_categories_applied($r['categories_applied']),
-                    $r['panel_code'], $r['panel_area'], $r['qualifying_exam'], $r['gate_score'],
-                    $r['written_marks'],
-                    $r['avg_interview'] !== null ? round($r['avg_interview'], 2) : '',
-                    $adj !== null ? round($adj, 2) : '',
-                    $adjG !== null ? round($adjG, 2) : '',
-                    $r['final_status'], $appliedCat($r), $r['birth_category_number']]);
-            }
+        foreach ($rowsB as $r) {
+            $present = $r['avg_interview'] !== null;
+            $amg = $adjustedGlobal($r);
+            $marks = $present ? round($amg !== null ? $amg : (float)$r['avg_interview'], 2) : 0;
+            $considerTA = ($r['final_status'] === 'Selected' || $r['final_status'] === 'Waitlisted') ? 'Yes' : '';
+            $remarks = $r['final_status'] === 'Waitlisted' ? 'Waitlisted' : '';
+            fputcsv($out, [
+                $i++,
+                $r['dept_reg_no'],
+                $r['name'],
+                $r['birth_category'] ?? '',
+                $r['ews'] === 'Y' ? 'Y' : 'N',
+                $r['disabled'] === 'Y' ? 'Y' : 'N',
+                $present ? 'Present' : 'Absent',
+                100,
+                $marks,
+                $considerTA,
+                $remarks,
+            ]);
         }
         fclose($out); exit;
     }

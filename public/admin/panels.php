@@ -27,6 +27,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unfreeze_interview'])
     redirect('/phdportal/admin/panels.php');
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_user'])) {
+    check_csrf();
+    $uid  = (int)($_POST['user_id'] ?? 0);
+    $code = trim((string)($_POST['panel_code'] ?? ''));
+    $p = $code ? one('SELECT code, area FROM panels WHERE code=?', [$code]) : null;
+    $target = $uid ? one('SELECT id, role FROM users WHERE id=?', [$uid]) : null;
+    if (!$target || $target['role'] !== 'panel') {
+        flash_set('Select a panel user.', 'error');
+    } elseif (!$p) {
+        flash_set('Panel not found.', 'error');
+    } else {
+        q('UPDATE users SET panel_code=?, panel_area=? WHERE id=?', [$p['code'], $p['area'], $uid]);
+        flash_set('User assigned to ' . $p['code'] . '.', 'success');
+    }
+    redirect('/phdportal/admin/panels.php');
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unassign_user'])) {
+    check_csrf();
+    $uid = (int)($_POST['user_id'] ?? 0);
+    if ($uid) {
+        q('UPDATE users SET panel_code=NULL, panel_area=NULL WHERE id=? AND role=\'panel\'', [$uid]);
+        flash_set('User removed from panel.', 'success');
+    }
+    redirect('/phdportal/admin/panels.php');
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['manual_assign'])) {
     check_csrf();
     if (!$cutoffFrozen) { flash_set('Freeze the cutoff before allocating panels.', 'error'); redirect('/phdportal/admin/panels.php'); }
@@ -62,12 +89,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_assign'])) {
     $cands = all("SELECT id, research_interest_selected FROM candidates
                   WHERE intake_id=? AND is_international=0 AND passed_cutoff=1", [$intake['id']]);
 
-    // Tokenize an area/interest string: lowercase, split on non-alphanumerics, drop stopwords
-    // and generic words that appear across multiple panels ("management", "business").
-    $stop = ['and','or','the','of','for','an','in','on','to','with','management','business'];
+    // Tokenize an area/interest string: lowercase, split on non-alphanumerics, drop stopwords.
+    // Length filter is >=2 so panel codes/abbreviations baked into area names ("OM", "HR", "OB",
+    // "DS", "IT", "IB") aren't dropped.
+    $stop = ['and','or','the','of','for','an','in','on','to','with','as','at','by','is','we','management','business'];
     $tokenize = function ($s) use ($stop) {
         $toks = preg_split('/[^a-z0-9]+/', strtolower((string)$s), -1, PREG_SPLIT_NO_EMPTY);
-        return array_values(array_filter($toks, fn($t) => strlen($t) >= 3 && !in_array($t, $stop, true)));
+        return array_values(array_filter($toks, fn($t) => strlen($t) >= 2 && !in_array($t, $stop, true)));
     };
 
     $panelTokens = [];
@@ -107,6 +135,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['auto_assign'])) {
     flash_set($msg, 'success');
     redirect('/phdportal/admin/panels.php');
 }
+
+$unassignedPanelUsers = all("SELECT id, username, full_name FROM users
+    WHERE role='panel' AND active=1 AND (panel_code IS NULL OR panel_code='')
+    ORDER BY full_name");
 
 $byPanel = [];
 if ($intake && $cutoffFrozen) {
@@ -226,6 +258,48 @@ render_header('Panels', $u);
       </div>
       <?php if ($list): ?>
       <button class="btn btn-primary" onclick='downloadPanelPdf(<?= json_encode($p['code']) ?>, <?= json_encode($p['area']) ?>, <?= json_encode(array_values(array_map(fn($r)=>["dept"=>$r['dept_reg_no'],"name"=>$r['name']],$list))) ?>)'>Download Interview PDF</button>
+      <?php endif; ?>
+    </div>
+
+    <div class="mb-3 border border-slate-200 rounded p-3 bg-slate-50">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <h4 class="font-semibold text-sm">Panel Members (<?= count($members) ?>)</h4>
+        <?php if (!$interviewFrozen): ?>
+        <form method="post" class="flex gap-2 items-center">
+          <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+          <input type="hidden" name="assign_user" value="1">
+          <input type="hidden" name="panel_code" value="<?= h($p['code']) ?>">
+          <select name="user_id" required class="text-xs py-1">
+            <option value="">-- assign user --</option>
+            <?php foreach ($unassignedPanelUsers as $au): ?>
+              <option value="<?= (int)$au['id'] ?>"><?= h($au['full_name'].' ('.$au['username'].')') ?></option>
+            <?php endforeach; ?>
+          </select>
+          <button class="btn btn-primary text-xs py-1 px-2" <?= $unassignedPanelUsers ? '' : 'disabled' ?>>Add</button>
+          <?php if (!$unassignedPanelUsers): ?>
+            <span class="text-xs text-slate-500">No unassigned panel users. Create one in <a href="/phdportal/admin/users.php" class="underline">Users</a>.</span>
+          <?php endif; ?>
+        </form>
+        <?php endif; ?>
+      </div>
+      <?php if ($members): ?>
+        <ul class="flex flex-wrap gap-2">
+          <?php foreach ($members as $pm): ?>
+            <li class="inline-flex items-center gap-2 bg-white border border-slate-200 rounded px-2 py-1 text-xs">
+              <span><?= h($pm['full_name']) ?></span>
+              <?php if (!$interviewFrozen): ?>
+              <form method="post" onsubmit="return confirm('Remove <?= h($pm['full_name']) ?> from <?= h($p['code']) ?>?');">
+                <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+                <input type="hidden" name="unassign_user" value="1">
+                <input type="hidden" name="user_id" value="<?= (int)$pm['id'] ?>">
+                <button class="text-rose-600 hover:text-rose-800" title="Remove">&times;</button>
+              </form>
+              <?php endif; ?>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+      <?php else: ?>
+        <p class="text-xs text-slate-500">No users assigned to this panel.</p>
       <?php endif; ?>
     </div>
     <?php if ($list): ?>

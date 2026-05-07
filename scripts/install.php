@@ -15,13 +15,13 @@ $pdo->prepare('INSERT INTO users(username,password_hash,full_name,role) VALUES(?
 
 // Panel profiles (Research Areas) matching SJMSOM PhD areas
 $panels = [
-    ['panel_mg', 'Economics & Policy', 'EP'],
-    ['panel_ob', 'Organizational Behaviour & HRM', 'OBHR'],
-    ['panel_op', 'Operations & Supply Chain Management', 'OSCM'],
-    ['panel_fn', 'Finance & Accounting', 'FIN'],
+    ['panel_ep', 'Economics and Policy', 'EP'],
     ['panel_mk', 'Marketing', 'MKT'],
-    ['panel_it', 'Information Systems & Analytics', 'ISA'],
-    ['panel_sm', 'Strategic Management & Competitiveness', 'SMC'],
+    ['panel_tm', 'Technology Management and Strategy IB Competitiveness', 'TMSC'],
+    ['panel_ds', 'DS and IT', 'DSIT'],
+    ['panel_fn', 'Finance and Accounting', 'FIN'],
+    ['panel_om', 'OM', 'OM'],
+    ['panel_hr', 'HR and OB', 'HROB'],
     ['panel_en', 'Entrepreneurship', 'ENT'],
 ];
 $stmt = $pdo->prepare('INSERT INTO users(username,password_hash,full_name,role,panel_code,panel_area) VALUES(?,?,?,?,?,?)
@@ -48,4 +48,4 @@ if (!$exists || (int)$exists['c'] === 0) {
 
 echo "Install complete.\n";
 echo "Admin login: $adminUser / $adminPass\n";
-echo "Panel logins (8): panel_mg, panel_ob, panel_op, panel_fn, panel_mk, panel_it, panel_sm, panel_en (password: $panelPass)\n";
+echo "Panel logins (8): panel_ep, panel_mk, panel_tm, panel_ds, panel_fn, panel_om, panel_hr, panel_en (password: $panelPass)\n";
