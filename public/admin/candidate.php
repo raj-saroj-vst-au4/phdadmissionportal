@@ -8,9 +8,15 @@ $id = (int)($_GET['id'] ?? 0);
 $c = one('SELECT * FROM candidates WHERE id=? AND is_international=0', [$id]);
 if (!$c) { http_response_code(404); echo 'Not found'; exit; }
 
+$frozen = (bool)setting('shortlist_frozen_' . $c['intake_id']);
+
 // Application PDF upload
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_app'])) {
     check_csrf();
+    if ($frozen) {
+        flash_set('Shortlist is frozen — candidate edits are locked.', 'error');
+        redirect('/phdportal/admin/candidate.php?id=' . $id);
+    }
     if (!empty($_FILES['app_pdf']['name']) && $_FILES['app_pdf']['error'] === UPLOAD_ERR_OK) {
         if (!is_dir(UPLOAD_APP_DIR)) mkdir(UPLOAD_APP_DIR, 0775, true);
         $fname = preg_replace('/[^A-Za-z0-9_-]/', '_', $c['dept_reg_no']) . '.pdf';
@@ -25,6 +31,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_app'])) {
 // Main profile save
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['upload_app'])) {
     check_csrf();
+    if ($frozen) {
+        flash_set('Shortlist is frozen — candidate edits are locked.', 'error');
+        redirect('/phdportal/admin/candidate.php?id=' . $id);
+    }
     $panelCode = $_POST['panel_code'] ?: null;
     $panelArea = null;
     if ($panelCode) {
@@ -69,6 +79,12 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
     <p class="text-sm text-slate-500 font-mono"><?= h($c['dept_reg_no']) ?> &middot; <?= h($c['applicant_id']) ?></p>
   </div>
   <div class="flex flex-col items-end gap-2">
+    <?php if ($frozen): ?>
+      <span class="inline-flex items-center gap-1 text-rose-700 text-sm font-semibold bg-rose-50 border border-rose-200 px-2 py-1 rounded">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Shortlist Frozen — edits locked
+      </span>
+    <?php endif; ?>
     <a href="/phdportal/admin/candidates.php" class="btn btn-secondary">&larr; Back to Candidates List</a>
     <div class="flex gap-2">
       <?php if ($prev): ?>
@@ -168,7 +184,7 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
     <div class="card">
       <h3 class="font-semibold mb-2">Shortlisting</h3>
       <label class="text-xs font-medium">Decision</label>
-      <select name="screening_status">
+      <select name="screening_status" <?= $frozen ? 'disabled' : '' ?>>
         <?php foreach (['Yes','No','Pending','Doubtful'] as $s): ?>
           <option<?= $s===$c['screening_status']?' selected':'' ?>><?= $s ?></option>
         <?php endforeach; ?>
@@ -189,7 +205,7 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
       </h3>
       <p class="text-xs text-slate-500 mb-1">Original: <span class="font-mono"><?= h(normalize_categories_applied($c['categories_applied']) ?: '—') ?></span></p>
       <label class="text-xs font-medium">Revised</label>
-      <select name="revised_categories_applied">
+      <select name="revised_categories_applied" <?= $frozen ? 'disabled' : '' ?>>
         <option value="">—</option>
         <?php foreach ($revOpts as $ro): ?>
           <option value="<?= h($ro) ?>"<?= $ro===$revCurrent?' selected':'' ?>><?= h($ro) ?></option>
@@ -201,7 +217,7 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
     <div class="card">
       <h3 class="font-semibold mb-2">Panel Assignment</h3>
       <label class="text-xs font-medium">Panel</label>
-      <select name="panel_code">
+      <select name="panel_code" <?= $frozen ? 'disabled' : '' ?>>
         <option value="">—</option>
         <?php foreach ($panels as $p): ?>
           <option value="<?= h($p['code']) ?>"<?= $p['code']===$c['panel_code']?' selected':'' ?>><?= h($p['code'].' — '.$p['area']) ?></option>
@@ -212,8 +228,13 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
     <!-- Remark + Save -->
     <div class="card">
       <h3 class="font-semibold mb-2">Admin Remarks</h3>
-      <textarea name="remark" rows="4"><?= h($c['remark']) ?></textarea>
-      <button class="btn btn-primary mt-2 w-full justify-center">Save Changes</button>
+      <textarea name="remark" rows="4" <?= $frozen ? 'disabled' : '' ?>><?= h($c['remark']) ?></textarea>
+      <?php if ($frozen): ?>
+        <button type="button" class="btn btn-primary mt-2 w-full justify-center opacity-40 cursor-not-allowed" disabled
+                title="Shortlist is frozen — unfreeze it from the Candidates page to edit.">Save Changes (locked)</button>
+      <?php else: ?>
+        <button class="btn btn-primary mt-2 w-full justify-center">Save Changes</button>
+      <?php endif; ?>
     </div>
   </div>
 </form>
@@ -222,12 +243,16 @@ render_header('Candidate - ' . $c['dept_reg_no'], $u);
 <div class="card mt-4">
   <h3 class="font-semibold mb-2">Upload Application PDF</h3>
   <p class="text-xs text-slate-500 mb-3">File will be stored as <code class="bg-slate-100 px-1 rounded"><?= h(preg_replace('/[^A-Za-z0-9_-]/', '_', $c['dept_reg_no'])) ?>.pdf</code></p>
+  <?php if ($frozen): ?>
+    <p class="text-xs text-rose-700 font-semibold">Shortlist is frozen — uploads are disabled.</p>
+  <?php else: ?>
   <form method="post" enctype="multipart/form-data" class="flex items-center gap-3">
     <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
     <input type="hidden" name="upload_app" value="1">
     <input type="file" name="app_pdf" accept=".pdf,application/pdf" required class="flex-1">
     <button class="btn btn-secondary">Upload PDF</button>
   </form>
+  <?php endif; ?>
 </div>
 
 <!-- Interview Marks (read-only; Edit links to admin/edit_marks.php) -->

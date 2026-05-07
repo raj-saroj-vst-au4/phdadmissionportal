@@ -15,12 +15,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['shortlist_all_yes']))
         $bq = trim($_POST['q'] ?? '');
         $bs = $_POST['shortlist'] ?? '';
         $bc = $_POST['cat'] ?? '';
+        $ba = $_POST['applied'] ?? '';
         if ($bq !== '') {
             $bw[] = '(dept_reg_no LIKE ? OR name LIKE ? OR email LIKE ? OR applicant_id LIKE ?)';
             $like = "%$bq%"; array_push($bp, $like, $like, $like, $like);
         }
         if ($bs !== '') { $bw[] = 'screening_status = ?'; $bp[] = $bs; }
-        if ($bc !== '') { $bw[] = 'birth_category = ?'; $bp[] = $bc; }
+        if ($bc === 'EWS') { $bw[] = "ews = 'Y'"; }
+        elseif ($bc === 'PWD') { $bw[] = "disabled = 'Y'"; }
+        elseif ($bc !== '') { $bw[] = 'birth_category = ?'; $bp[] = $bc; }
+        if ($ba !== '') { $bw[] = 'categories_applied REGEXP ?'; $bp[] = '\\b' . $ba . '\\b'; }
         $sql = 'UPDATE candidates SET screening_status=? WHERE ' . implode(' AND ', $bw);
         $n = q($sql, array_merge(['Yes'], $bp))->rowCount();
         flash_set("Marked $n candidate(s) as Shortlisted (Yes).", 'success');
@@ -31,6 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['shortlist_all_yes']))
         'q' => $_POST['q'] ?? '',
         'shortlist' => $_POST['shortlist'] ?? '',
         'cat' => $_POST['cat'] ?? '',
+        'applied' => $_POST['applied'] ?? '',
     ], fn($v) => $v !== ''));
     redirect('/phdportal/admin/candidates.php' . ($qs ? "?$qs" : ''));
 }
@@ -113,7 +118,11 @@ $undecided = $intake ? (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_
 $q = trim($_GET['q'] ?? '');
 $shortlist = $_GET['shortlist'] ?? '';
 $cat = $_GET['cat'] ?? '';
+$applied = $_GET['applied'] ?? '';
 $passedCutoff = $_GET['passed_cutoff'] ?? '';
+
+$APPLIED_OPTIONS = ['TA','CT','EX','SW','SF','FA','IS','TAP'];
+if ($applied !== '' && !in_array($applied, $APPLIED_OPTIONS, true)) $applied = '';
 
 $where = ['intake_id = ?', 'is_international = 0'];
 $params = [$intake['id'] ?? 0];
@@ -122,7 +131,10 @@ if ($q !== '') {
     $like = "%$q%"; array_push($params, $like, $like, $like, $like);
 }
 if ($shortlist !== '') { $where[] = 'screening_status = ?'; $params[] = $shortlist; }
-if ($cat !== '') { $where[] = 'birth_category = ?'; $params[] = $cat; }
+if ($cat === 'EWS') { $where[] = "ews = 'Y'"; }
+elseif ($cat === 'PWD') { $where[] = "disabled = 'Y'"; }
+elseif ($cat !== '') { $where[] = 'birth_category = ?'; $params[] = $cat; }
+if ($applied !== '') { $where[] = 'categories_applied REGEXP ?'; $params[] = '\\b' . $applied . '\\b'; }
 if ($passedCutoff === '1') { $where[] = 'passed_cutoff = 1'; }
 $sql = 'SELECT * FROM candidates WHERE ' . implode(' AND ', $where) . ' ORDER BY serial_no, id LIMIT 500';
 $rows = $intake ? all($sql, $params) : [];
@@ -154,6 +166,7 @@ render_header('Candidates', $u);
         <input type="hidden" name="q" value="<?= h($q) ?>">
         <input type="hidden" name="shortlist" value="<?= h($shortlist) ?>">
         <input type="hidden" name="cat" value="<?= h($cat) ?>">
+        <input type="hidden" name="applied" value="<?= h($applied) ?>">
         <button name="shortlist_all_yes" class="btn btn-primary text-xs">Shortlist All as Yes</button>
       </form>
     <?php endif; ?>
@@ -161,13 +174,21 @@ render_header('Candidates', $u);
   <?php endif; ?>
 </div>
 
-<form class="card mb-4 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+<form class="card mb-4 grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
   <div><label class="text-xs font-medium">Search (reg no / name / email)</label><input name="q" value="<?= h($q) ?>"></div>
   <div><label class="text-xs font-medium">Shortlist</label>
     <select name="shortlist">
       <option value="">All</option>
       <?php foreach (['Yes','No','Pending','Doubtful'] as $s): ?>
         <option<?= $s===$shortlist?' selected':'' ?>><?= $s ?></option>
+      <?php endforeach; ?>
+    </select>
+  </div>
+  <div><label class="text-xs font-medium">Applied</label>
+    <select name="applied">
+      <option value="">All</option>
+      <?php foreach ($APPLIED_OPTIONS as $a): ?>
+        <option<?= $a===$applied?' selected':'' ?>><?= $a ?></option>
       <?php endforeach; ?>
     </select>
   </div>

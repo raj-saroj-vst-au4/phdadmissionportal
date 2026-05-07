@@ -11,6 +11,11 @@
 __pycache__/
 *.pyc
 
+# Project-local Python venvs (OMR scanner deps; bootstrap with scripts/install_omr.sh)
+/.venv-omr/
+/.venv/
+/venv/
+
 # Editor / tooling
 .claude/
 .vscode/

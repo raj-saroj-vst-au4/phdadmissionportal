@@ -87,17 +87,47 @@ $effectiveCat = function(array $row): ?string {
 // the DB `passed_cutoff` flag is only refreshed on form submit, so it goes stale whenever marks are
 // autosaved, Excel-imported, or candidates are added after the last "Visualize and Save".
 $catStats = array_fill_keys(BIRTH_CATEGORIES, ['total' => 0, 'above' => 0]);
+// Application categories: TA/FA/SF first (primary buckets), then any additional categories
+// (EX/CT/TAP/SW/IS) that show up in the data so no candidate is dropped from the totals.
+const APP_CATEGORIES_PRIMARY = ['TA', 'FA', 'SF'];
+const APP_CATEGORIES_ALL = ['TA', 'FA', 'SF', 'EX', 'CT', 'TAP', 'SW', 'IS'];
+$appCatStats = array_fill_keys(APP_CATEGORIES_ALL, ['total' => 0, 'above' => 0]);
+$dualUnrevised = 0;  // applied to 2 categories, revised category not set
 $genderStats = []; $researchStats = [];
 $marksByCat = array_fill_keys(BIRTH_CATEGORIES, []);
 $shortlisted = [];
 if ($intake) {
     $all = all("SELECT id, serial_no, dept_reg_no, name, gender, birth_category, ews, disabled,
-                       written_marks, research_interest_selected
+                       written_marks, research_interest_selected,
+                       categories_applied, revised_categories_applied
                 FROM candidates WHERE intake_id=? AND is_international=0 AND screening_status='Yes'
                 ORDER BY serial_no, id", [$intake['id']]);
     $genderLabelMap = ['M' => 'Male', 'F' => 'Female'];
     $researchTally = [];
     foreach ($all as $row) {
+        // Application categories applied for: revised wins over original; split slash/comma lists
+        // so a "TA / FA" candidate is counted under both TA and FA buckets.
+        $hasRevised = trim((string)($row['revised_categories_applied'] ?? '')) !== '';
+        $appliedRaw = $hasRevised ? $row['revised_categories_applied'] : ($row['categories_applied'] ?? '');
+        $appliedNorm = normalize_categories_applied($appliedRaw);
+        $appliedTokens = [];
+        if ($appliedNorm) {
+            foreach (preg_split('/[\/,]/', $appliedNorm) as $tok) {
+                $tok = strtoupper(trim($tok));
+                if (isset($appCatStats[$tok])) $appliedTokens[$tok] = true;
+            }
+        }
+        foreach (array_keys($appliedTokens) as $tok) $appCatStats[$tok]['total']++;
+        // Dual-applicant flag: original list has exactly 2 categories AND no revised pick yet —
+        // these candidates need an admin to choose which bucket they fall into.
+        if (!$hasRevised) {
+            $origNorm = normalize_categories_applied($row['categories_applied'] ?? '');
+            $origTokens = $origNorm
+                ? array_filter(array_map(fn($t) => strtoupper(trim($t)), preg_split('/[\/,]/', $origNorm)))
+                : [];
+            if (count(array_unique($origTokens)) === 2) $dualUnrevised++;
+        }
+
         $ec = $effectiveCat($row);
         if (!isset($catStats[$ec])) continue;
         $catStats[$ec]['total']++;
@@ -107,6 +137,7 @@ if ($intake) {
         $eff = $cutoff * (CUTOFF_MULTIPLIERS[$ec] ?? 1.0);
         if ($marks < $eff) continue;
         $catStats[$ec]['above']++;
+        foreach (array_keys($appliedTokens) as $tok) $appCatStats[$tok]['above']++;
 
         $gLabel = $genderLabelMap[$row['gender']] ?? ($row['gender'] ?: 'Unknown');
         $genderStats[$gLabel] = ($genderStats[$gLabel] ?? 0) + 1;
@@ -206,8 +237,29 @@ $(document).on('keydown', e => { if (e.key === 'Escape') $('#unfreezeBackdrop').
     <canvas id="genderChart" height="180"></canvas>
   </div>
   <div class="card">
-    <h3 class="font-semibold mb-3">Cutoff Pass/Fail</h3>
-    <canvas id="passFailChart" height="180"></canvas>
+    <h3 class="font-semibold mb-3">Application Category-wise Candidates</h3>
+    <table class="data-table w-full">
+      <thead><tr><th>Category</th><th>Total</th><th>Shortlisted</th></tr></thead>
+      <tbody>
+      <?php
+        $appTotTotal = 0; $appTotAbove = 0;
+        // Show primary TA/FA/SF unconditionally, plus any other category that has candidates
+        // so the footer total reconciles with the actual applicant count.
+        $appRows = APP_CATEGORIES_PRIMARY;
+        foreach ($appCatStats as $ac => $as) if (!in_array($ac, $appRows, true) && $as['total'] > 0) $appRows[] = $ac;
+        foreach ($appRows as $ac): $as = $appCatStats[$ac]; $appTotTotal += $as['total']; $appTotAbove += $as['above'];
+      ?>
+        <tr><td><span class="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-indigo-100 text-indigo-800"><?= h($ac) ?></span></td><td><?= $as['total'] ?></td><td class="text-green-700 font-semibold"><?= $as['above'] ?></td></tr>
+      <?php endforeach; ?>
+      </tbody>
+      <tfoot>
+        <tr class="font-semibold border-t"><td>Total</td><td><?= $appTotTotal ?></td><td class="text-green-700"><?= $appTotAbove ?></td></tr>
+      </tfoot>
+    </table>
+    <p class="text-xs text-slate-500 mt-2">Uses revised application category if set, else the original. Candidates applying for multiple categories are counted in each.</p>
+    <?php if ($dualUnrevised > 0): ?>
+      <p class="text-xs text-amber-700 mt-1"><strong><?= $dualUnrevised ?></strong> candidate<?= $dualUnrevised === 1 ? '' : 's' ?> applied to double categories without a revised category set.</p>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -232,9 +284,6 @@ $(document).on('keydown', e => { if (e.key === 'Escape') $('#unfreezeBackdrop').
 </div>
 
 <script>
-const catLabels = <?= json_encode(array_keys($catStats)) ?>;
-const catTotals = <?= json_encode(array_values(array_map(fn($s)=>$s['total'],$catStats))) ?>;
-const catAbove = <?= json_encode(array_values(array_map(fn($s)=>$s['above'],$catStats))) ?>;
 const gLabels = <?= json_encode(array_keys($genderStats)) ?>;
 const gData = <?= json_encode(array_values($genderStats)) ?>;
 const rLabels = <?= json_encode(array_keys($researchStats)) ?>;
@@ -247,7 +296,6 @@ if (gLabels.length) {
   new Chart(document.getElementById('genderChart'),{type:'doughnut',data:{labels:gLabels,datasets:[{data:gData,backgroundColor:gColors}]},options:{plugins:{legend:{position:'bottom'}}}});
 }
 if (rLabels.length) new Chart(document.getElementById('researchChart'),{type:'bar',data:{labels:rLabels,datasets:[{label:'Count',data:rData,backgroundColor:'#4f46e5'}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
-if (catLabels.length) new Chart(document.getElementById('passFailChart'),{type:'bar',data:{labels:catLabels,datasets:[{label:'Total',data:catTotals,backgroundColor:'#cbd5e1'},{label:'&ge; Cutoff',data:catAbove,backgroundColor:'#10b981'}]},options:{plugins:{legend:{position:'bottom'}}}});
 
 const MULT = <?= json_encode(CUTOFF_MULTIPLIERS) ?>;
 document.querySelectorAll('.sc-box').forEach(box => {

@@ -19,12 +19,13 @@ $presets = [
     'subject' => 'Interview Shortlist — SJMSOM IITB PhD Admissions {{intake}}',
     'body' => "Dear {{name}},\n\nCongratulations! You have been shortlisted for the personal interview round of SJMSOM PhD Admissions {{intake}}.\n(Dept Reg No: {{dept_reg_no}})\n\nPlease watch this inbox for further interview details.\n\nBest regards,\nSJMSOM Admissions Office\nIIT Bombay",
   ],
-  'final' => [
-    'subject' => 'PhD Admission Offer — SJMSOM IITB {{intake}}',
-    'body' => "Dear {{name}},\n\nCongratulations! We are pleased to offer you admission to the PhD programme at Shailesh J. Mehta School of Management, IIT Bombay for {{intake}}.\n(Dept Reg No: {{dept_reg_no}})\n\nA formal admission letter with further details will follow.\n\nBest regards,\nSJMSOM Admissions Office\nIIT Bombay",
+  'panel_invite' => [
+    'subject' => 'Panel Coordinator Invitation — SJMSOM IITB PhD Admissions {{intake}}',
+    'body' => "Dear {{full_name}},\n\nYou have been invited to serve as a Panel Coordinator for SJMSOM PhD Admissions {{intake}}.\n\nPanel: {{panel_code}} — {{panel_area}}\n\nPlease use the credentials below to log in to the SJMSOM PhD Admissions Portal and access your panel:\n\nLogin URL : {{login_url}}\nUsername  : {{username}}\nPassword  : {{password}}\n\nFor security, please change your password after first login.\n\nIf you have any questions, please reply to this email.\n\nBest regards,\nSJMSOM Admissions Office\nIIT Bombay",
   ],
 ];
-$preset = $presets[$phase] ?? $presets['written'];
+if (!isset($presets[$phase])) $phase = 'written';
+$preset = $presets[$phase];
 
 // Count recipients
 if ($phase === 'written') {
@@ -33,9 +34,14 @@ if ($phase === 'written') {
 } elseif ($phase === 'interview') {
     $count = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=? AND screening_status='Yes' AND written_marks IS NOT NULL AND passed_cutoff=1 AND email IS NOT NULL AND email<>''", [$intake['id'],$isIntl])['c'];
     $countLabel = 'Candidates passing cutoff with email';
-} else {
-    $count = (int)one("SELECT COUNT(*) c FROM candidates WHERE intake_id=? AND is_international=? AND final_status='Selected' AND email IS NOT NULL AND email<>''", [$intake['id'],$isIntl])['c'];
-    $countLabel = 'Finally selected with email';
+} else { // panel_invite
+    // Same dataset as /admin/panels.php (Panel Members) and /admin/users.php
+    // (panel-role users): every active user with role='panel'. Email is required
+    // to actually send, so the count surfaces only those with an email on file.
+    $count = (int)one("SELECT COUNT(*) c FROM users
+                       WHERE role='panel' AND active=1
+                       AND email IS NOT NULL AND email<>''")['c'];
+    $countLabel = 'Active panel coordinators with email';
 }
 
 $logs = all('SELECT * FROM email_log WHERE intake_id=? ORDER BY id DESC LIMIT 15', [$intake['id']]);
@@ -44,17 +50,19 @@ render_header('Email Communication', $u);
 ?>
 <h1 class="text-2xl font-semibold mb-4">Email Communication</h1>
 
+<?php if ($phase !== 'panel_invite'): ?>
 <div class="mb-3 flex items-center gap-4 text-sm">
   <label class="flex items-center gap-2 cursor-pointer">
     <input type="radio" name="aud" value="0" <?= !$isIntl ? 'checked' : '' ?> onchange="location.href='?phase=<?= h($phase) ?>&intl=0'">
     <span>Indian Candidates</span>
   </label>
 </div>
+<?php endif; ?>
 
 <div class="flex border-b border-slate-200 mb-5 gap-1">
   <a href="?phase=written&intl=<?= $isIntl ?>" class="px-4 py-2 text-sm font-medium rounded-t <?= $phase==='written' ? 'bg-white border border-b-white border-slate-200 text-indigo-700' : 'text-slate-600 hover:text-slate-800' ?>">Written Exam Instructions</a>
   <a href="?phase=interview&intl=<?= $isIntl ?>" class="px-4 py-2 text-sm font-medium rounded-t <?= $phase==='interview' ? 'bg-white border border-b-white border-slate-200 text-indigo-700' : 'text-slate-600 hover:text-slate-800' ?>">Interview Shortlist</a>
-  <a href="?phase=final&intl=<?= $isIntl ?>" class="px-4 py-2 text-sm font-medium rounded-t <?= $phase==='final' ? 'bg-white border border-b-white border-slate-200 text-indigo-700' : 'text-slate-600 hover:text-slate-800' ?>">Final Selection</a>
+  <a href="?phase=panel_invite" class="px-4 py-2 text-sm font-medium rounded-t <?= $phase==='panel_invite' ? 'bg-white border border-b-white border-slate-200 text-indigo-700' : 'text-slate-600 hover:text-slate-800' ?>">Panel Coordinator Invite</a>
 </div>
 
 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -64,7 +72,12 @@ render_header('Email Communication', $u);
       <input id="em_subject" name="subject" value="<?= h($preset['subject']) ?>" required>
       <label class="text-sm font-medium mt-3 block">Body</label>
       <textarea id="em_body" name="body" rows="14" required><?= h($preset['body']) ?></textarea>
-      <p class="text-xs text-slate-500 mt-1">Placeholders: <code>{{name}}</code>, <code>{{dept_reg_no}}</code>, <code>{{intake}}</code></p>
+      <?php if ($phase === 'panel_invite'): ?>
+        <p class="text-xs text-slate-500 mt-1">Placeholders: <code>{{full_name}}</code>, <code>{{username}}</code>, <code>{{password}}</code>, <code>{{login_url}}</code>, <code>{{panel_code}}</code>, <code>{{panel_area}}</code>, <code>{{intake}}</code></p>
+        <p class="text-xs text-amber-700 mt-1">Sending will <strong>generate a fresh random password</strong> for each coordinator and overwrite their existing password. Plaintext passwords are sent only via this email and not stored on the server.</p>
+      <?php else: ?>
+        <p class="text-xs text-slate-500 mt-1">Placeholders: <code>{{name}}</code>, <code>{{dept_reg_no}}</code>, <code>{{intake}}</code></p>
+      <?php endif; ?>
 
       <?php if ($phase === 'written'): ?>
       <label class="flex items-center gap-2 mt-3 text-sm cursor-pointer">
@@ -98,7 +111,7 @@ render_header('Email Communication', $u);
     <div class="card">
       <h3 class="font-semibold mb-2">Recipients</h3>
       <div class="text-4xl font-bold text-indigo-700"><?= $count ?></div>
-      <p class="text-xs text-slate-500 mt-1"><?= h($countLabel) ?> — <?= $isIntl ? 'International' : 'Indian' ?></p>
+      <p class="text-xs text-slate-500 mt-1"><?= h($countLabel) ?><?= $phase === 'panel_invite' ? '' : ' — ' . ($isIntl ? 'International' : 'Indian') ?></p>
 
       <hr class="my-3 border-slate-200">
       <h3 class="font-semibold mb-2 text-sm">SMTP</h3>
@@ -124,6 +137,7 @@ render_header('Email Communication', $u);
       </div>
     </div>
 
+    <?php if ($phase !== 'panel_invite'): ?>
     <div class="card">
       <h3 class="font-semibold mb-1 text-sm">Resend to specific RMG numbers</h3>
       <p class="text-xs text-slate-500 mb-2">Comma- or newline-separated. Max 50. Uses the subject &amp; body above.</p>
@@ -138,6 +152,7 @@ render_header('Email Communication', $u);
         <button type="button" id="rsStartBtn" class="btn btn-primary btn-sm">Resend</button>
       </div>
     </div>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -188,30 +203,36 @@ async function runBatch(queueRes, attachAdmit) {
   let sent = 0, failed = 0;
   $('#progressCount').text('0 / ' + total);
 
+  const isPanelInvite = (PHASE === 'panel_invite');
+  const sendUrl = isPanelInvite
+    ? '/phdportal/api/email_panel_send_one.php'
+    : '/phdportal/api/email_send_one.php';
+
   for (let i = 0; i < total; i++) {
     if (stopRequested) break;
     const r = recipients[i];
+    const tag = isPanelInvite ? (r.username || '') : (r.dept_reg_no || '');
     $('#progressLabel').text('Sending ' + (i+1) + ' of ' + total + ' → ' + r.email);
 
-    const payload = {
-      csrf: window.CSRF_TOKEN, batch_id: batchId, cand_id: r.id, subject, body
-    };
-    if (attachAdmit) {
+    const payload = isPanelInvite
+      ? { csrf: window.CSRF_TOKEN, batch_id: batchId, user_id: r.id, password: r.password, subject, body }
+      : { csrf: window.CSRF_TOKEN, batch_id: batchId, cand_id: r.id, subject, body };
+    if (attachAdmit && !isPanelInvite) {
       try {
         payload.attachment = await buildAdmitCardB64(r, admitCtx);
         payload.attachment_name = 'AdmitCard_' + r.dept_reg_no + '.pdf';
       } catch (e) {
-        appendDetail('! ' + r.dept_reg_no + ' — admit card build failed, sending without attachment', 'text-amber-700');
+        appendDetail('! ' + tag + ' — admit card build failed, sending without attachment', 'text-amber-700');
       }
     }
 
     try {
-      const res = await $.post('/phdportal/api/email_send_one.php', payload);
-      if (res.ok) { sent++; appendDetail('✓ ' + r.dept_reg_no + ' — ' + r.email, 'text-green-700'); }
-      else { failed++; appendDetail('✗ ' + r.dept_reg_no + ' — ' + r.email + ' — ' + (res.error || 'failed'), 'text-rose-700'); }
+      const res = await $.post(sendUrl, payload);
+      if (res.ok) { sent++; appendDetail('✓ ' + tag + ' — ' + r.email, 'text-green-700'); }
+      else { failed++; appendDetail('✗ ' + tag + ' — ' + r.email + ' — ' + (res.error || 'failed'), 'text-rose-700'); }
     } catch (e) {
       failed++;
-      appendDetail('✗ ' + r.dept_reg_no + ' — request error', 'text-rose-700');
+      appendDetail('✗ ' + tag + ' — request error', 'text-rose-700');
     }
     const pct = Math.round(((i+1) / total) * 100);
     $('#progressBar').css('width', pct + '%');
@@ -255,8 +276,11 @@ $('#startBtn').on('click', async function() {
   $('#progressLabel').text('Verifying password & loading recipient list…');
 
   let queueRes;
+  const queueUrl = (PHASE === 'panel_invite')
+    ? '/phdportal/api/email_panel_queue.php'
+    : '/phdportal/api/email_queue.php';
   try {
-    queueRes = await $.post('/phdportal/api/email_queue.php',
+    queueRes = await $.post(queueUrl,
       { csrf: window.CSRF_TOKEN, phase: PHASE, is_international: IS_INTL, subject, body, password });
   } catch (e) { alert('Failed to build queue.'); resetUi(); return; }
   if (!queueRes.ok) { alert(queueRes.error || 'Queue failed'); resetUi(); return; }

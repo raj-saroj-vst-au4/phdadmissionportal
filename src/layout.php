@@ -14,6 +14,7 @@ function render_header(string $title, ?array $user = null): void {
 <script src="/phdportal/assets/vendor/chart.umd.min.js"></script>
 <script src="/phdportal/assets/vendor/jspdf.umd.min.js"></script>
 <script src="/phdportal/assets/vendor/jspdf-autotable.min.js"></script>
+<script src="/phdportal/assets/vendor/qrcode.min.js"></script>
 <link rel="stylesheet" href="/phdportal/assets/css/app.css">
 <script>window.CSRF_TOKEN = <?= json_encode(csrf_token()) ?>;</script>
 </head>
@@ -45,6 +46,7 @@ function render_header(string $title, ?array $user = null): void {
           <div class="dd-menu hidden absolute right-0 top-full mt-1 min-w-[240px] bg-white text-slate-800 rounded shadow-lg border border-slate-200 z-50">
             <a class="block px-4 py-2 text-sm hover:bg-indigo-50" href="/phdportal/admin/rooms.php">Room Allocation</a>
             <a class="block px-4 py-2 text-sm hover:bg-indigo-50" href="/phdportal/admin/admit_cards.php">Admit Cards</a>
+            <a class="block px-4 py-2 text-sm hover:bg-indigo-50" href="/phdportal/admin/omr.php">OMR Upload</a>
             <a class="block px-4 py-2 text-sm hover:bg-indigo-50" href="/phdportal/admin/marks.php">Written / CBT Marks</a>
             <a class="block px-4 py-2 text-sm hover:bg-indigo-50" href="/phdportal/admin/cutoff.php">Cutoff &amp; Analytics</a>
           </div>

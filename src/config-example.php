@@ -19,6 +19,13 @@ define('UPLOAD_APP_DIR', PUBLIC_ROOT . '/uploads/applications');
 define('UPLOAD_PHOTO_DIR', PUBLIC_ROOT . '/uploads/photos');
 
 define('PYTHON_BIN', '/usr/bin/python3');
+// OMR scanner needs cv2/numpy/pdf2image which aren't in the system Python.
+// Bootstrap the venv with: python3 -m venv .venv-omr && .venv-omr/bin/pip install opencv-python-headless pdf2image numpy
+// Falls back to PYTHON_BIN if the project venv hasn't been bootstrapped yet.
+define('OMR_PYTHON_BIN',
+    is_file(APP_ROOT . '/.venv-omr/bin/python')
+        ? APP_ROOT . '/.venv-omr/bin/python'
+        : PYTHON_BIN);
 define('EXTRACT_SCRIPT', APP_ROOT . '/scripts/extract_excel.py');
 define('EXTRACT_SCRIPT_INTL', APP_ROOT . '/scripts/extract_excel_intl.py');
 
